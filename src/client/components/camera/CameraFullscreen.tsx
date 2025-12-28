@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import type { JSMpegPlayer } from '../jsmpeg';
+import type { JSMpegPlayer } from '../../jsmpeg';
 
 interface Props {
   channelId: number;
