@@ -46,6 +46,27 @@ function AppContent() {
     setView('fullscreen');
   };
 
+  const handlePrevCamera = () => {
+    if (selectedChannel === null) return;
+    const currentIndex = channels.findIndex((c) => c.id === selectedChannel);
+    if (currentIndex > 0) {
+      setSelectedChannel(channels[currentIndex - 1].id);
+    }
+  };
+
+  const handleNextCamera = () => {
+    if (selectedChannel === null) return;
+    const currentIndex = channels.findIndex((c) => c.id === selectedChannel);
+    if (currentIndex < channels.length - 1) {
+      setSelectedChannel(channels[currentIndex + 1].id);
+    }
+  };
+
+  const getCurrentCameraIndex = () => {
+    if (selectedChannel === null) return -1;
+    return channels.findIndex((c) => c.id === selectedChannel);
+  };
+
   const handleBackToGrid = () => {
     setSelectedChannel(null);
     setView('grid');
@@ -120,6 +141,10 @@ function AppContent() {
               `Camera ${selectedChannel}`
             }
             onBack={handleBackToGrid}
+            onPrevCamera={handlePrevCamera}
+            onNextCamera={handleNextCamera}
+            hasPrev={getCurrentCameraIndex() > 0}
+            hasNext={getCurrentCameraIndex() < channels.length - 1}
           />
         )}
 

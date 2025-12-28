@@ -1,10 +1,19 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import type { JSMpegPlayer } from '../../jsmpeg';
+import { usePinchZoom } from '../../hooks/usePinchZoom';
+import { useSwipeNavigation } from '../../hooks/useSwipeNavigation';
+import { useSnapshot } from '../../hooks/useSnapshot';
+import { useRecording } from '../../hooks/useRecording';
+import { useToast } from '../../contexts/ToastContext';
 
 interface Props {
   channelId: number;
   channelName: string;
   onBack: () => void;
+  onPrevCamera?: () => void;
+  onNextCamera?: () => void;
+  hasPrev?: boolean;
+  hasNext?: boolean;
 }
 
 interface Transform {
@@ -13,18 +22,75 @@ interface Transform {
   y: number;
 }
 
-export default function CameraFullscreen({ channelId, channelName, onBack }: Props) {
+export default function CameraFullscreen({
+  channelId,
+  channelName,
+  onBack,
+  onPrevCamera,
+  onNextCamera,
+  hasPrev = false,
+  hasNext = false,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<JSMpegPlayer | null>(null);
   const [transform, setTransform] = useState<Transform>({ scale: 1, x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [showTimestamp, setShowTimestamp] = useState(true);
+  const [timestamp, setTimestamp] = useState('');
+  const [audioEnabled, setAudioEnabled] = useState(false);
+
+  // Update timestamp every second
+  useEffect(() => {
+    if (!showTimestamp) return;
+    const updateTime = () => {
+      const now = new Date();
+      setTimestamp(now.toLocaleTimeString('en-US', { hour12: false }));
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, [showTimestamp]);
+
+  const { takeSnapshot } = useSnapshot();
+  const { isRecording, toggleRecording } = useRecording();
+  const { addToast } = useToast();
+
+  const handleSnapshot = useCallback(() => {
+    if (canvasRef.current) {
+      takeSnapshot(canvasRef.current, { filename: `${channelName.replace(/\s+/g, '-')}-snapshot` });
+      addToast('success', 'Snapshot saved');
+    }
+  }, [takeSnapshot, channelName, addToast]);
+
+  const handleRecordingToggle = useCallback(async () => {
+    const success = await toggleRecording(channelId, channelName);
+    if (success) {
+      addToast('success', isRecording ? 'Recording stopped' : 'Recording started');
+    } else {
+      addToast('error', 'Failed to toggle recording');
+    }
+  }, [toggleRecording, channelId, channelName, isRecording, addToast]);
+
+  // Touch pinch-to-zoom
+  const { handlers: pinchHandlers } = usePinchZoom<HTMLDivElement>({
+    minScale: 1,
+    maxScale: 4,
+    onTransformChange: setTransform,
+  });
+
+  // Touch swipe navigation (only when not zoomed)
+  const swipeHandlers = useSwipeNavigation({
+    onSwipeLeft: transform.scale <= 1 && hasNext ? onNextCamera : undefined,
+    onSwipeRight: transform.scale <= 1 && hasPrev ? onPrevCamera : undefined,
+    threshold: 80,
+  });
 
   useEffect(() => {
     if (!canvasRef.current) return;
 
-    const wsUrl = `ws://${window.location.hostname}:3002?channel=${channelId}&quality=high`;
+    const wsUrl = `ws://${window.location.hostname}:3002?channel=${channelId}&quality=high&audio=${audioEnabled}`;
 
     const timer = setTimeout(() => {
       if (!canvasRef.current) return;
@@ -32,7 +98,7 @@ export default function CameraFullscreen({ channelId, channelName, onBack }: Pro
       playerRef.current = new window.JSMpeg.Player(wsUrl, {
         canvas: canvasRef.current,
         autoplay: true,
-        audio: false,
+        audio: audioEnabled,
         loop: true,
       });
     }, 100);
@@ -46,7 +112,7 @@ export default function CameraFullscreen({ channelId, channelName, onBack }: Pro
       }
       playerRef.current = null;
     };
-  }, [channelId]);
+  }, [channelId, audioEnabled]);
 
   const handleZoomIn = useCallback(() => {
     setTransform((prev) => ({
@@ -121,12 +187,18 @@ export default function CameraFullscreen({ channelId, channelName, onBack }: Pro
         case '0':
           handleReset();
           break;
+        case 'ArrowLeft':
+          if (transform.scale <= 1 && hasPrev) onPrevCamera?.();
+          break;
+        case 'ArrowRight':
+          if (transform.scale <= 1 && hasNext) onNextCamera?.();
+          break;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onBack, handleZoomIn, handleZoomOut, handleReset]);
+  }, [onBack, handleZoomIn, handleZoomOut, handleReset, transform.scale, hasPrev, hasNext, onPrevCamera, onNextCamera]);
 
   return (
     <div className="fullscreen-view">
@@ -135,6 +207,40 @@ export default function CameraFullscreen({ channelId, channelName, onBack }: Pro
           Back
         </button>
         <h2>{channelName}</h2>
+        <div className="fullscreen-actions">
+          <button
+            className="action-btn"
+            onClick={handleSnapshot}
+            title="Take snapshot"
+            aria-label="Take snapshot"
+          >
+            📷
+          </button>
+          <button
+            className={`action-btn ${isRecording ? 'action-btn--recording' : ''}`}
+            onClick={handleRecordingToggle}
+            title={isRecording ? 'Stop recording' : 'Start recording'}
+            aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+          >
+            {isRecording ? '⏹' : '⏺'}
+          </button>
+          <button
+            className={`action-btn ${showTimestamp ? 'action-btn--active' : ''}`}
+            onClick={() => setShowTimestamp(!showTimestamp)}
+            title="Toggle timestamp"
+            aria-label="Toggle timestamp"
+          >
+            🕐
+          </button>
+          <button
+            className={`action-btn ${audioEnabled ? 'action-btn--active' : ''}`}
+            onClick={() => setAudioEnabled(!audioEnabled)}
+            title={audioEnabled ? 'Mute audio' : 'Enable audio'}
+            aria-label={audioEnabled ? 'Mute audio' : 'Enable audio'}
+          >
+            {audioEnabled ? '🔊' : '🔇'}
+          </button>
+        </div>
         <div className="zoom-controls">
           <button onClick={handleZoomOut} disabled={transform.scale <= 1}>
             -
@@ -157,8 +263,30 @@ export default function CameraFullscreen({ channelId, channelName, onBack }: Pro
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        style={{ cursor: transform.scale > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default' }}
+        onTouchStart={(e) => {
+          pinchHandlers.onTouchStart(e);
+          swipeHandlers.onTouchStart(e);
+        }}
+        onTouchMove={pinchHandlers.onTouchMove}
+        onTouchEnd={(e) => {
+          pinchHandlers.onTouchEnd(e);
+          swipeHandlers.onTouchEnd(e);
+        }}
+        style={{
+          cursor: transform.scale > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default',
+          touchAction: 'none',
+        }}
       >
+        {hasPrev && transform.scale <= 1 && (
+          <button
+            className="fullscreen-nav fullscreen-nav--prev"
+            onClick={onPrevCamera}
+            aria-label="Previous camera"
+          >
+            ‹
+          </button>
+        )}
+
         <canvas
           ref={canvasRef}
           className="fullscreen-canvas"
@@ -166,6 +294,22 @@ export default function CameraFullscreen({ channelId, channelName, onBack }: Pro
             transform: `scale(${transform.scale}) translate(${transform.x / transform.scale}px, ${transform.y / transform.scale}px)`,
           }}
         />
+
+        {showTimestamp && (
+          <div className="fullscreen-timestamp">
+            {timestamp}
+          </div>
+        )}
+
+        {hasNext && transform.scale <= 1 && (
+          <button
+            className="fullscreen-nav fullscreen-nav--next"
+            onClick={onNextCamera}
+            aria-label="Next camera"
+          >
+            ›
+          </button>
+        )}
       </div>
 
       <div className="fullscreen-hints">
@@ -173,6 +317,7 @@ export default function CameraFullscreen({ channelId, channelName, onBack }: Pro
         <span>Drag to pan</span>
         <span>ESC to exit</span>
         <span>+/- to zoom</span>
+        {(hasPrev || hasNext) && <span>←/→ prev/next</span>}
       </div>
     </div>
   );

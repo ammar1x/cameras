@@ -3,10 +3,11 @@ import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import cors from 'cors';
 import { readFileSync, writeFileSync } from 'fs';
-import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { AppConfig } from '../shared/types.js';
+import { StreamManager } from './StreamManager.js';
+import { RecordingManager } from './RecordingManager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.resolve(__dirname, '../../config.json');
@@ -26,8 +27,21 @@ app.use(express.json());
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
-// Store active FFmpeg processes
-const streams = new Map<number, ChildProcess>();
+// Initialize StreamManager and RecordingManager with config
+const config = loadConfig();
+const streamManager = new StreamManager({
+  host: config.xvr.host,
+  port: config.xvr.port,
+  username: config.xvr.username,
+  password: config.xvr.password,
+});
+
+const recordingManager = new RecordingManager({
+  host: config.xvr.host,
+  port: config.xvr.port,
+  username: config.xvr.username,
+  password: config.xvr.password,
+});
 
 // API: Get config
 app.get('/api/config', (req, res) => {
@@ -71,81 +85,68 @@ app.get('/api/channels', (req, res) => {
   res.json(channels);
 });
 
+// API: Get active streams info
+app.get('/api/streams', (req, res) => {
+  res.json(streamManager.getActiveStreams());
+});
+
+// API: Get recording status
+app.get('/api/recordings', (req, res) => {
+  res.json(recordingManager.getActiveRecordings());
+});
+
+// API: Check if a specific channel is recording
+app.get('/api/recordings/:channelId', (req, res) => {
+  const channelId = parseInt(req.params.channelId, 10);
+  res.json({ recording: recordingManager.isRecording(channelId) });
+});
+
+// API: Start recording
+app.post('/api/recordings/:channelId/start', (req, res) => {
+  const channelId = parseInt(req.params.channelId, 10);
+  const channelName = req.body.channelName || `Camera ${channelId}`;
+  const result = recordingManager.startRecording(channelId, channelName);
+  res.json(result);
+});
+
+// API: Stop recording
+app.post('/api/recordings/:channelId/stop', (req, res) => {
+  const channelId = parseInt(req.params.channelId, 10);
+  const result = recordingManager.stopRecording(channelId);
+  res.json(result);
+});
+
 // WebSocket connection handling
 wss.on('connection', (ws: WebSocket, req) => {
   const url = new URL(req.url || '', `http://${req.headers.host}`);
   const channelId = parseInt(url.searchParams.get('channel') || '1', 10);
+  const quality = (url.searchParams.get('quality') || 'low') as 'low' | 'high';
+  const audio = url.searchParams.get('audio') === 'true';
 
-  console.log(`Client connected for channel ${channelId}`);
+  console.log(`Client connected for channel ${channelId} (${quality}, audio: ${audio})`);
 
-  const config = loadConfig();
-  const { host, port, username, password } = config.xvr;
-
-  // Build RTSP URL - subtype=0 is main stream (high quality), subtype=1 is sub stream
-  const quality = url.searchParams.get('quality') || 'high';
-  const subtype = quality === 'low' ? 1 : 0;
-  const rtspUrl = `rtsp://${username}:${password}@${host}:${port}/cam/realmonitor?channel=${channelId}&subtype=${subtype}`;
-
-  // Quality settings
-  const resolution = quality === 'low' ? '640x480' : '1280x960';
-  const bitrate = quality === 'low' ? '800k' : '3000k';
-
-  // Spawn FFmpeg to transcode RTSP to MPEG1 for JSMpeg
-  const ffmpeg = spawn('ffmpeg', [
-    '-rtsp_transport', 'tcp',
-    '-i', rtspUrl,
-    '-f', 'mpegts',
-    '-codec:v', 'mpeg1video',
-    '-b:v', bitrate,
-    '-r', '24',
-    '-s', resolution,
-    '-bf', '0',
-    '-q:v', '4', // Quality scale (1-31, lower is better)
-    '-an', // No audio
-    '-',
-  ]);
-
-  streams.set(channelId, ffmpeg);
-
-  ffmpeg.stdout.on('data', (data: Buffer) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(data);
-    }
-  });
-
-  ffmpeg.stderr.on('data', (data: Buffer) => {
-    const msg = data.toString();
-    if (msg.includes('error') || msg.includes('Error')) {
-      console.error(`FFmpeg channel ${channelId}:`, msg);
-    }
-  });
-
-  ffmpeg.on('close', (code) => {
-    console.log(`FFmpeg channel ${channelId} exited with code ${code}`);
-    streams.delete(channelId);
-  });
+  // Subscribe to stream via StreamManager
+  streamManager.subscribe(ws, channelId, quality, audio);
 
   ws.on('close', () => {
     console.log(`Client disconnected from channel ${channelId}`);
-    ffmpeg.kill('SIGTERM');
-    streams.delete(channelId);
+    streamManager.unsubscribe(ws, channelId, quality, audio);
   });
 
   ws.on('error', (err) => {
     console.error(`WebSocket error for channel ${channelId}:`, err);
-    ffmpeg.kill('SIGTERM');
-    streams.delete(channelId);
+    streamManager.unsubscribe(ws, channelId, quality, audio);
   });
 });
 
 // Cleanup on exit
 process.on('SIGINT', () => {
   console.log('Shutting down...');
-  streams.forEach((ffmpeg) => ffmpeg.kill('SIGTERM'));
+  streamManager.shutdown();
+  recordingManager.stopAll();
   process.exit(0);
 });
 
-const config = loadConfig();
 const PORT = config.server.port;
 
 server.listen(PORT, () => {
