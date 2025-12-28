@@ -24,7 +24,7 @@ export default function CameraFullscreen({ channelId, channelName, onBack }: Pro
   useEffect(() => {
     if (!canvasRef.current) return;
 
-    const wsUrl = `ws://${window.location.hostname}:3002?channel=${channelId}`;
+    const wsUrl = `ws://${window.location.hostname}:3002?channel=${channelId}&quality=high`;
 
     const timer = setTimeout(() => {
       if (!canvasRef.current) return;

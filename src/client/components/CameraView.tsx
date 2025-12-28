@@ -12,7 +12,7 @@ export default function CameraView({ channelId }: Props) {
   useEffect(() => {
     if (!canvasRef.current) return;
 
-    const wsUrl = `ws://${window.location.hostname}:3002?channel=${channelId}`;
+    const wsUrl = `ws://${window.location.hostname}:3002?channel=${channelId}&quality=low`;
 
     // Small delay to avoid React StrictMode double-invoke issues
     const timer = setTimeout(() => {

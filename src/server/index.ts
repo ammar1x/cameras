@@ -81,8 +81,14 @@ wss.on('connection', (ws: WebSocket, req) => {
   const config = loadConfig();
   const { host, port, username, password } = config.xvr;
 
-  // Build RTSP URL
-  const rtspUrl = `rtsp://${username}:${password}@${host}:${port}/cam/realmonitor?channel=${channelId}&subtype=1`;
+  // Build RTSP URL - subtype=0 is main stream (high quality), subtype=1 is sub stream
+  const quality = url.searchParams.get('quality') || 'high';
+  const subtype = quality === 'low' ? 1 : 0;
+  const rtspUrl = `rtsp://${username}:${password}@${host}:${port}/cam/realmonitor?channel=${channelId}&subtype=${subtype}`;
+
+  // Quality settings
+  const resolution = quality === 'low' ? '640x480' : '1280x960';
+  const bitrate = quality === 'low' ? '800k' : '3000k';
 
   // Spawn FFmpeg to transcode RTSP to MPEG1 for JSMpeg
   const ffmpeg = spawn('ffmpeg', [
@@ -90,10 +96,11 @@ wss.on('connection', (ws: WebSocket, req) => {
     '-i', rtspUrl,
     '-f', 'mpegts',
     '-codec:v', 'mpeg1video',
-    '-b:v', '1000k',
+    '-b:v', bitrate,
     '-r', '24',
-    '-s', '640x480',
+    '-s', resolution,
     '-bf', '0',
+    '-q:v', '4', // Quality scale (1-31, lower is better)
     '-an', // No audio
     '-',
   ]);
