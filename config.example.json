@@ -1,0 +1,29 @@
+{
+  "xvr": {
+    "host": "192.168.1.100",
+    "port": 554,
+    "username": "admin",
+    "password": "your-password-here",
+    "channels": [
+      { "id": 1, "name": "Camera 1", "enabled": true },
+      { "id": 2, "name": "Camera 2", "enabled": true },
+      { "id": 3, "name": "Camera 3", "enabled": false },
+      { "id": 4, "name": "Camera 4", "enabled": false },
+      { "id": 5, "name": "Camera 5", "enabled": false },
+      { "id": 6, "name": "Camera 6", "enabled": false },
+      { "id": 7, "name": "Camera 7", "enabled": false },
+      { "id": 8, "name": "Camera 8", "enabled": false },
+      { "id": 9, "name": "Camera 9", "enabled": false },
+      { "id": 10, "name": "Camera 10", "enabled": false },
+      { "id": 11, "name": "Camera 11", "enabled": false },
+      { "id": 12, "name": "Camera 12", "enabled": false },
+      { "id": 13, "name": "Camera 13", "enabled": false },
+      { "id": 14, "name": "Camera 14", "enabled": false },
+      { "id": 15, "name": "Camera 15", "enabled": false },
+      { "id": 16, "name": "Camera 16", "enabled": false }
+    ]
+  },
+  "server": {
+    "port": 3002
+  }
+}
