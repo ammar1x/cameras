@@ -1,4 +1,4 @@
-import React, { RefObject, useEffect, useCallback } from 'react';
+import React, { RefObject, useEffect, useCallback, useState } from 'react';
 import SkipDropdown from './SkipDropdown';
 
 interface VideoPlayerOverlayProps {
@@ -21,6 +21,7 @@ interface VideoPlayerOverlayProps {
   playbackTime: string | null;
   playbackStatus: string;
   onBack: () => void;
+  onTimeJump?: (time: string) => void;
   disabled?: boolean;
 }
 
@@ -46,8 +47,37 @@ export default function VideoPlayerOverlay({
   playbackTime,
   playbackStatus,
   onBack,
+  onTimeJump,
   disabled,
 }: VideoPlayerOverlayProps) {
+  const [isEditingTime, setIsEditingTime] = useState(false);
+  const [editTime, setEditTime] = useState('');
+
+  // Extract just the time portion (HH:MM:SS) from playbackTime
+  const timeOnly = playbackTime ? playbackTime.split(' ')[1] || '' : '';
+
+  const handleTimeClick = () => {
+    if (onTimeJump && playbackTime) {
+      setEditTime(timeOnly);
+      setIsEditingTime(true);
+    }
+  };
+
+  const handleTimeSubmit = () => {
+    if (onTimeJump && editTime && playbackTime) {
+      const datePart = playbackTime.split(' ')[0];
+      onTimeJump(`${datePart} ${editTime}`);
+    }
+    setIsEditingTime(false);
+  };
+
+  const handleTimeKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleTimeSubmit();
+    } else if (e.key === 'Escape') {
+      setIsEditingTime(false);
+    }
+  };
   // Keyboard shortcuts
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     // Don't handle if typing in input
@@ -125,7 +155,28 @@ export default function VideoPlayerOverlay({
         </button>
         <div className="overlay-info">
           <span className="overlay-channel">{channelName}</span>
-          {playbackTime && <span className="overlay-time">{playbackTime}</span>}
+          {playbackTime && (
+            isEditingTime ? (
+              <input
+                type="time"
+                step="1"
+                className="overlay-time-input"
+                value={editTime}
+                onChange={(e) => setEditTime(e.target.value)}
+                onBlur={handleTimeSubmit}
+                onKeyDown={handleTimeKeyDown}
+                autoFocus
+              />
+            ) : (
+              <span
+                className={`overlay-time ${onTimeJump ? 'clickable' : ''}`}
+                onClick={handleTimeClick}
+                title={onTimeJump ? 'Click to jump to a specific time' : undefined}
+              >
+                {playbackTime}
+              </span>
+            )
+          )}
           {playbackStatus && playbackStatus !== 'Playing' && (
             <span className={`overlay-status ${playbackStatus.includes('error') || playbackStatus.includes('Error') ? 'error' : ''}`}>
               {playbackStatus}
@@ -150,6 +201,40 @@ export default function VideoPlayerOverlay({
         onMouseLeave={onControlsLeave}
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Mini timeline for quick navigation */}
+        {playbackTime && onTimeJump && (
+          <div className="mini-timeline" onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const percent = x / rect.width;
+            const hour = Math.floor(percent * 24);
+            const minute = Math.floor((percent * 24 - hour) * 60);
+            const datePart = playbackTime.split(' ')[0];
+            onTimeJump(`${datePart} ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`);
+          }}>
+            <div className="mini-timeline-track">
+              {/* Current position indicator */}
+              <div
+                className="mini-timeline-position"
+                style={{
+                  left: `${(() => {
+                    const timePart = playbackTime.split(' ')[1] || '00:00:00';
+                    const [h, m] = timePart.split(':').map(Number);
+                    return ((h + m / 60) / 24) * 100;
+                  })()}%`
+                }}
+              />
+            </div>
+            <div className="mini-timeline-labels">
+              <span>00:00</span>
+              <span>06:00</span>
+              <span>12:00</span>
+              <span>18:00</span>
+              <span>24:00</span>
+            </div>
+          </div>
+        )}
+
         <div className="controls-row">
           {/* Play/Pause */}
           <button

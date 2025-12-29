@@ -23,6 +23,7 @@ interface TimelineSidebarProps {
   selectedChannel: number | null;
   onTimelineClick: (channel: number, e: React.MouseEvent<HTMLDivElement>) => void;
   loading: boolean;
+  currentPlaybackTime?: Date | null;
 }
 
 // Convert time string to hour position (0-24)
@@ -47,19 +48,22 @@ export default function TimelineSidebar({
   selectedChannel,
   onTimelineClick,
   loading,
+  currentPlaybackTime,
 }: TimelineSidebarProps) {
+  // Calculate current time position as percentage of day
+  const currentTimePosition = currentPlaybackTime
+    ? ((currentPlaybackTime.getHours() + currentPlaybackTime.getMinutes() / 60) / 24) * 100
+    : null;
   return (
-    <>
-      {/* Toggle button - always visible */}
-      <button
-        className={`sidebar-toggle ${collapsed ? 'collapsed' : ''}`}
-        onClick={onToggle}
-        title={collapsed ? 'Show timeline' : 'Hide timeline'}
-      >
-        {collapsed ? '◀' : '▶'}
-      </button>
-
       <div className={`timeline-sidebar ${collapsed ? 'collapsed' : ''}`}>
+        {/* Toggle button - attached to sidebar */}
+        <button
+          className="sidebar-toggle-btn"
+          onClick={onToggle}
+          title={collapsed ? 'Show timeline' : 'Hide timeline'}
+        >
+          {collapsed ? '◀' : '▶'}
+        </button>
         <div className="sidebar-header">
           <h3>Timeline</h3>
           <select
@@ -90,6 +94,13 @@ export default function TimelineSidebar({
             <div className="loading-timelines">Loading...</div>
           ) : (
             <div className="timeline-channels">
+              {/* Current playback time indicator line */}
+              {currentTimePosition !== null && (
+                <div
+                  className="current-time-indicator"
+                  style={{ left: `calc(55px + (100% - 55px - var(--spacing-sm)) * ${currentTimePosition} / 100)` }}
+                />
+              )}
               {channelData.map(({ channel, recordings }) => (
                 <div
                   key={channel}
@@ -121,6 +132,5 @@ export default function TimelineSidebar({
           )}
         </div>
       </div>
-    </>
   );
 }

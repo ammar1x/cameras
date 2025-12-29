@@ -82,22 +82,30 @@ export default function DVRPlayback({ onBack }: Props) {
     fetchAllChannels();
   }, [selectedDate]);
 
-  // Track video play state
+  // Track video play state - re-run when selectedChannel changes since video is conditionally rendered
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
     const handlePlay = () => setIsPlaying(true);
     const handlePause = () => setIsPlaying(false);
+    const handlePlaying = () => setIsPlaying(true);
+
+    // Check initial state
+    if (!video.paused) {
+      setIsPlaying(true);
+    }
 
     video.addEventListener('play', handlePlay);
     video.addEventListener('pause', handlePause);
+    video.addEventListener('playing', handlePlaying);
 
     return () => {
       video.removeEventListener('play', handlePlay);
       video.removeEventListener('pause', handlePause);
+      video.removeEventListener('playing', handlePlaying);
     };
-  }, []);
+  }, [selectedChannel]);
 
   // Stop current playback
   const stopPlayback = useCallback(() => {
@@ -315,6 +323,27 @@ export default function DVRPlayback({ onBack }: Props) {
     }
   }, []);
 
+  // Jump to specific time
+  const handleTimeJump = useCallback((timeStr: string) => {
+    if (!selectedChannel) return;
+
+    // Parse "YYYY-MM-DD HH:MM:SS" format
+    const [datePart, timePart] = timeStr.split(' ');
+    if (!datePart || !timePart) return;
+
+    const [year, month, day] = datePart.split('-');
+    const [hour, minute, second] = timePart.split(':').map(Number);
+
+    const startTime = timeStr;
+    const endHour = Math.min(hour + 1, 23);
+    const endTime = `${datePart} ${endHour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`;
+
+    const newTime = new Date(`${datePart}T${timePart}`);
+    setPlaybackTime(startTime);
+    setCurrentPlaybackTime(newTime);
+    startPlayback(selectedChannel, startTime, endTime);
+  }, [selectedChannel, startPlayback]);
+
   // Handle timeline click
   const handleTimelineClick = useCallback((channel: number, e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -400,6 +429,7 @@ export default function DVRPlayback({ onBack }: Props) {
               playbackTime={playbackTime}
               playbackStatus={playbackStatus}
               onBack={onBack}
+              onTimeJump={handleTimeJump}
               disabled={!hasContent}
             />
           </>
@@ -424,6 +454,7 @@ export default function DVRPlayback({ onBack }: Props) {
         selectedChannel={selectedChannel}
         onTimelineClick={handleTimelineClick}
         loading={loading}
+        currentPlaybackTime={currentPlaybackTime}
       />
     </div>
   );
