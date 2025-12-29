@@ -1,23 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import Hls from 'hls.js';
 import VideoPlayerOverlay from './VideoPlayerOverlay';
 import TimelineSidebar from './TimelineSidebar';
 import { useFullscreen } from '../../hooks/useFullscreen';
 import { useControlsVisibility } from '../../hooks/useControlsVisibility';
 
-// Check if device needs HLS (iOS doesn't support MSE)
-const needsHLS = () => {
+// Check if device needs MP4 streaming instead of MSE (iOS doesn't support MSE)
+const needsMP4 = () => {
   // iOS Safari doesn't support MSE
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  // Check if MSE is available
+  // Check if MSE is available and working
   const hasMSE = typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('video/mp4; codecs="avc1.640029"');
   return isIOS || !hasMSE;
-};
-
-// Check if browser has native HLS support (Safari)
-const hasNativeHLS = () => {
-  const video = document.createElement('video');
-  return video.canPlayType('application/vnd.apple.mpegurl') !== '';
 };
 
 interface Recording {
@@ -67,7 +60,6 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
   const wsRef = useRef<WebSocket | null>(null);
   const mediaSourceRef = useRef<MediaSource | null>(null);
   const sourceBufferRef = useRef<SourceBuffer | null>(null);
-  const hlsRef = useRef<Hls | null>(null);
 
   // Hooks
   const { isFullscreen, toggleFullscreen } = useFullscreen(containerRef);
@@ -146,11 +138,6 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
         // Ignore
       }
     }
-    // Clean up HLS
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
     if (videoRef.current) {
       videoRef.current.src = '';
     }
@@ -159,57 +146,33 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
     setIsPlaying(false);
   }, []);
 
-  // Start HLS playback for mobile devices
-  const startHLSPlayback = useCallback((streamName: string) => {
+  // Start MP4 playback for mobile devices (simpler than HLS, works on all browsers)
+  const startMP4Playback = useCallback((streamName: string) => {
     if (!videoRef.current) return;
 
-    const hlsUrl = `/go2rtc/stream.m3u8?src=${streamName}`;
-    console.log('Starting HLS playback:', hlsUrl);
+    // Use go2rtc's MP4 progressive streaming endpoint
+    const mp4Url = `/go2rtc/stream.mp4?src=${streamName}`;
+    console.log('Starting MP4 playback:', mp4Url);
 
-    if (hasNativeHLS()) {
-      // Safari has native HLS support
-      console.log('Using native HLS');
-      videoRef.current.src = hlsUrl;
-      videoRef.current.oncanplay = () => {
-        videoRef.current?.play().catch(() => {});
-      };
-      videoRef.current.onerror = () => {
-        setPlaybackStatus('HLS playback failed');
-      };
+    videoRef.current.src = mp4Url;
+    videoRef.current.oncanplay = () => {
+      console.log('MP4 can play');
+      videoRef.current?.play().catch((e) => {
+        console.warn('Autoplay blocked:', e);
+        setPlaybackStatus('Tap to play');
+      });
+    };
+    videoRef.current.onplaying = () => {
       setPlaybackStatus('Playing');
-    } else if (Hls.isSupported()) {
-      // Use hls.js for other browsers
-      console.log('Using hls.js');
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
-      });
-      hlsRef.current = hls;
-
-      hls.loadSource(hlsUrl);
-      hls.attachMedia(videoRef.current);
-
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        videoRef.current?.play().catch(() => {});
-        setPlaybackStatus('Playing');
-      });
-
-      hls.on(Hls.Events.ERROR, (event, data) => {
-        console.error('HLS error:', data);
-        if (data.fatal) {
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            setPlaybackStatus('Network error');
-          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            setPlaybackStatus('Media error');
-            hls.recoverMediaError();
-          } else {
-            setPlaybackStatus('HLS playback failed');
-          }
-        }
-      });
-    } else {
-      setPlaybackStatus('No supported playback method');
-    }
+    };
+    videoRef.current.onerror = (e) => {
+      console.error('MP4 playback error:', e);
+      setPlaybackStatus('Playback failed');
+    };
+    videoRef.current.onwaiting = () => {
+      setPlaybackStatus('Buffering...');
+    };
+    setPlaybackStatus('Loading...');
   }, []);
 
   // Start MSE playback via go2rtc (for desktop browsers)
@@ -379,9 +342,9 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
       setPlaybackStatus('Loading stream...');
 
       // Choose playback method based on device capabilities
-      if (needsHLS()) {
-        console.log('Device needs HLS, using HLS playback');
-        startHLSPlayback(info.streamName);
+      if (needsMP4()) {
+        console.log('Device needs MP4 streaming (mobile/iOS)');
+        startMP4Playback(info.streamName);
       } else {
         console.log('Device supports MSE, using MSE playback');
         startMSEPlayback(info.streamName);
@@ -396,7 +359,7 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
         setPlaybackStatus(`Playback error: ${errMsg}`);
       }
     }
-  }, [streamInfo, stopPlayback, startHLSPlayback, startMSEPlayback]);
+  }, [streamInfo, stopPlayback, startMP4Playback, startMSEPlayback]);
 
   // Auto-start playback from URL on initial load
   useEffect(() => {

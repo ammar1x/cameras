@@ -364,6 +364,50 @@ app.get('/processed/*', (req, res) => {
   proxyReq.end();
 });
 
+// Proxy all go2rtc HLS requests (master playlist, variant playlist, segments)
+app.get('/go2rtc/*', async (req, res) => {
+  // Extract the path after /go2rtc/
+  const go2rtcPath = req.path.replace('/go2rtc/', '');
+  const queryString = req.url.includes('?') ? req.url.split('?')[1] : '';
+  const fullPath = queryString ? `${go2rtcPath}?${queryString}` : go2rtcPath;
+
+  try {
+    const proxyUrl = `${GO2RTC_API}/api/${fullPath}`;
+    console.log('Proxying go2rtc request:', proxyUrl);
+
+    const response = await fetch(proxyUrl);
+    if (!response.ok) {
+      console.error('go2rtc proxy error:', response.status, response.statusText);
+      res.status(response.status).send('Request failed');
+      return;
+    }
+
+    // Copy content-type from response
+    const contentType = response.headers.get('content-type');
+    if (contentType) {
+      res.setHeader('Content-Type', contentType);
+    }
+    res.setHeader('Cache-Control', 'no-cache');
+
+    // For m3u8 playlists, rewrite URLs to go through our proxy
+    if (go2rtcPath.endsWith('.m3u8') || contentType?.includes('mpegurl')) {
+      let body = await response.text();
+      // Rewrite relative URLs like "hls/playlist.m3u8?id=xxx" to "/go2rtc/hls/playlist.m3u8?id=xxx"
+      body = body.replace(/(hls\/[^\s]+)/g, '/go2rtc/$1');
+      // Rewrite segment URLs
+      body = body.replace(/segment\.(ts|m4s)\?/g, '/go2rtc/segment.$1?');
+      res.send(body);
+    } else {
+      // For binary content (segments), stream directly
+      const buffer = await response.arrayBuffer();
+      res.send(Buffer.from(buffer));
+    }
+  } catch (err) {
+    console.error('go2rtc proxy error:', err);
+    res.status(502).send('Proxy failed');
+  }
+});
+
 // WebSocket connection handling
 wss.on('connection', (ws: WebSocket, req) => {
   const url = new URL(req.url || '', `http://${req.headers.host}`);
