@@ -1540,6 +1540,52 @@ body {
   font-size: 1rem;
 }
 
+.dvr-player .player-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg-tertiary);
+  border-top: 1px solid var(--glass-border);
+  gap: var(--spacing-md);
+}
+
+.dvr-player .skip-controls,
+.dvr-player .speed-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.dvr-player .speed-label {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-right: var(--spacing-xs);
+}
+
+.dvr-player .skip-controls button,
+.dvr-player .speed-controls button {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.dvr-player .skip-controls button:hover,
+.dvr-player .speed-controls button:hover {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.dvr-player .speed-controls button.active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
 @media (max-width: 1024px) {
   .dvr-content {
     flex-direction: column;

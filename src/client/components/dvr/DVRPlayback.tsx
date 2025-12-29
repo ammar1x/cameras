@@ -32,6 +32,8 @@ export default function DVRPlayback({ onBack }: Props) {
   const [playbackStatus, setPlaybackStatus] = useState<string>('');
   const [selectedTime, setSelectedTime] = useState<string>('12:00');
   const [jumpChannel, setJumpChannel] = useState<number>(1);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
+  const [currentPlaybackTime, setCurrentPlaybackTime] = useState<Date | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const mediaSourceRef = useRef<MediaSource | null>(null);
@@ -265,7 +267,37 @@ export default function DVRPlayback({ onBack }: Props) {
 
     setSelectedChannel(jumpChannel);
     setPlaybackTime(startTime);
+    setCurrentPlaybackTime(new Date(`${year}-${month}-${day}T${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`));
     startPlayback(jumpChannel, startTime, endTime);
+  };
+
+  // Skip forward or backward by seconds
+  const handleSkip = (seconds: number) => {
+    if (!currentPlaybackTime || !selectedChannel) return;
+
+    const newTime = new Date(currentPlaybackTime.getTime() + seconds * 1000);
+    const year = newTime.getFullYear();
+    const month = (newTime.getMonth() + 1).toString().padStart(2, '0');
+    const day = newTime.getDate().toString().padStart(2, '0');
+    const hour = newTime.getHours();
+    const minute = newTime.getMinutes();
+    const second = newTime.getSeconds();
+
+    const startTime = `${year}-${month}-${day} ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`;
+    const endHour = Math.min(hour + 1, 23);
+    const endTime = `${year}-${month}-${day} ${endHour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`;
+
+    setPlaybackTime(startTime);
+    setCurrentPlaybackTime(newTime);
+    startPlayback(selectedChannel, startTime, endTime);
+  };
+
+  // Change playback speed
+  const handleSpeedChange = (speed: number) => {
+    setPlaybackSpeed(speed);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = speed;
+    }
   };
 
   // Handle timeline click
@@ -286,6 +318,7 @@ export default function DVRPlayback({ onBack }: Props) {
 
     setSelectedChannel(channel);
     setPlaybackTime(startTime);
+    setCurrentPlaybackTime(new Date(`${year}-${month}-${day}T${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`));
     startPlayback(channel, startTime, endTime);
   };
 
@@ -432,6 +465,26 @@ export default function DVRPlayback({ onBack }: Props) {
                 {playbackStatus && <span className="playback-status">{playbackStatus}</span>}
               </div>
               <video ref={videoRef} controls autoPlay playsInline muted />
+              <div className="player-controls">
+                <div className="skip-controls">
+                  <button onClick={() => handleSkip(-60)} title="Back 1 min">-1m</button>
+                  <button onClick={() => handleSkip(-10)} title="Back 10 sec">-10s</button>
+                  <button onClick={() => handleSkip(10)} title="Forward 10 sec">+10s</button>
+                  <button onClick={() => handleSkip(60)} title="Forward 1 min">+1m</button>
+                </div>
+                <div className="speed-controls">
+                  <span className="speed-label">Speed:</span>
+                  {[0.5, 1, 1.5, 2, 4].map((speed) => (
+                    <button
+                      key={speed}
+                      onClick={() => handleSpeedChange(speed)}
+                      className={playbackSpeed === speed ? 'active' : ''}
+                    >
+                      {speed}x
+                    </button>
+                  ))}
+                </div>
+              </div>
             </>
           ) : (
             <div className="player-placeholder">
