@@ -1,0 +1,29 @@
+api:
+  listen: ":1984"
+  origin: "*"
+
+webrtc:
+  listen: ":8555"
+  candidates:
+    - stun:stun.l.google.com:19302
+
+ffmpeg:
+  bin: ffmpeg
+
+# Live streams for each channel
+streams:
+  cam1: rtsp://amin:arda2005@192.168.8.130:554/cam/realmonitor?channel=1&subtype=0
+  cam2: rtsp://amin:arda2005@192.168.8.130:554/cam/realmonitor?channel=2&subtype=0
+  cam3: rtsp://amin:arda2005@192.168.8.130:554/cam/realmonitor?channel=3&subtype=0
+  cam4: rtsp://amin:arda2005@192.168.8.130:554/cam/realmonitor?channel=4&subtype=0
+  cam5: rtsp://amin:arda2005@192.168.8.130:554/cam/realmonitor?channel=5&subtype=0
+  cam6: rtsp://amin:arda2005@192.168.8.130:554/cam/realmonitor?channel=6&subtype=0
+  cam7: rtsp://amin:arda2005@192.168.8.130:554/cam/realmonitor?channel=7&subtype=0
+  cam8: rtsp://amin:arda2005@192.168.8.130:554/cam/realmonitor?channel=8&subtype=0
+  cam9: rtsp://amin:arda2005@192.168.8.130:554/cam/realmonitor?channel=9&subtype=0
+  playback_ch3_1766990616762: ffmpeg:rtsp://amin:arda2005@192.168.8.130:554/cam/playback?channel=3&starttime=2025_12_29_11_25_00&endtime=2025_12_29_12_00_00#video=h264
+  playback_ch1_1766990622399: ffmpeg:rtsp://amin:arda2005@192.168.8.130:554/cam/playback?channel=1&starttime=2025_12_29_07_00_00&endtime=2025_12_29_08_00_00#video=h264
+  playback_ch1_1766990646832: ffmpeg:rtsp://amin:arda2005@192.168.8.130:554/cam/playback?channel=1&starttime=2025_12_29_12_00_00&endtime=2025_12_29_13_00_00#video=h264
+  playback_ch5_1766990659897: ffmpeg:rtsp://amin:arda2005@192.168.8.130:554/cam/playback?channel=5&starttime=2025_12_28_12_00_00&endtime=2025_12_28_13_00_00#video=h264
+
+# Playback streams are created dynamically via API
