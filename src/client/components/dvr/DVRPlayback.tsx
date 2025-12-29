@@ -4,9 +4,9 @@ import TimelineSidebar from './TimelineSidebar';
 import { useFullscreen } from '../../hooks/useFullscreen';
 import { useControlsVisibility } from '../../hooks/useControlsVisibility';
 
-// Check if device needs MP4 streaming instead of MSE (iOS doesn't support MSE)
-const needsMP4 = () => {
-  // iOS Safari doesn't support MSE
+// Check if device needs HLS streaming instead of MSE (iOS doesn't support MSE)
+const needsHLS = () => {
+  // iOS Safari doesn't support MSE but has native HLS support
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
   // Check if MSE is available and working
   const hasMSE = typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('video/mp4; codecs="avc1.640029"');
@@ -146,13 +146,13 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
     setIsPlaying(false);
   }, []);
 
-  // Start MP4 playback for mobile devices (simpler than HLS, works on all browsers)
-  const startMP4Playback = useCallback((streamName: string, retryCount = 0) => {
+  // Start native playback for mobile/iOS devices using MP4 with proper headers
+  const startMobilePlayback = useCallback((streamName: string, retryCount = 0) => {
     if (!videoRef.current) return;
 
-    // Use go2rtc's MP4 progressive streaming endpoint
+    // Use go2rtc's MP4 endpoint - works on iOS Safari with proper content-type
     const mp4Url = `/go2rtc/stream.mp4?src=${streamName}`;
-    console.log(`Starting MP4 playback (attempt ${retryCount + 1}):`, mp4Url);
+    console.log(`Starting mobile playback (attempt ${retryCount + 1}):`, mp4Url);
 
     // Clear existing handlers
     const video = videoRef.current;
@@ -161,10 +161,11 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
     video.onerror = null;
     video.onwaiting = null;
     video.onloadeddata = null;
+    video.onloadedmetadata = null;
 
     // Set up event handlers before setting src
-    video.onloadeddata = () => {
-      console.log('MP4 loaded data');
+    video.onloadedmetadata = () => {
+      console.log('Mobile: metadata loaded');
       video.play().catch((e) => {
         console.warn('Autoplay blocked:', e);
         setPlaybackStatus('Tap to play');
@@ -172,20 +173,20 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
     };
 
     video.onplaying = () => {
-      console.log('MP4 playing');
+      console.log('Mobile: playing');
       setPlaybackStatus('Playing');
     };
 
     video.onerror = () => {
       const error = video.error;
-      console.error('MP4 playback error:', error?.code, error?.message);
+      console.error('Mobile playback error:', error?.code, error?.message);
 
       // Retry up to 3 times with increasing delays (stream may not be ready)
       if (retryCount < 3) {
         const delay = (retryCount + 1) * 1000; // 1s, 2s, 3s
         console.log(`Retrying in ${delay}ms...`);
         setPlaybackStatus(`Connecting... (${retryCount + 1}/3)`);
-        setTimeout(() => startMP4Playback(streamName, retryCount + 1), delay);
+        setTimeout(() => startMobilePlayback(streamName, retryCount + 1), delay);
       } else {
         setPlaybackStatus('Playback failed - try again');
       }
@@ -198,7 +199,7 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
     setPlaybackStatus(retryCount > 0 ? `Connecting... (${retryCount + 1}/3)` : 'Loading...');
 
     // Add a small delay before setting src to let go2rtc initialize the stream
-    const initialDelay = retryCount === 0 ? 500 : 0;
+    const initialDelay = retryCount === 0 ? 800 : 0;  // Increased delay for mobile
     setTimeout(() => {
       if (videoRef.current) {
         videoRef.current.src = mp4Url;
@@ -398,9 +399,9 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
       setPlaybackStatus('Loading stream...');
 
       // Choose playback method based on device capabilities
-      if (needsMP4()) {
-        console.log('Device needs MP4 streaming (mobile/iOS)');
-        startMP4Playback(info.streamName);
+      if (needsHLS()) {
+        console.log('Device needs mobile playback (MP4 for iOS)');
+        startMobilePlayback(info.streamName);
       } else {
         console.log('Device supports MSE, using MSE playback');
         startMSEPlayback(info.streamName);
@@ -415,7 +416,7 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
         setPlaybackStatus(`Playback error: ${errMsg}`);
       }
     }
-  }, [streamInfo, stopPlayback, startMP4Playback, startMSEPlayback]);
+  }, [streamInfo, stopPlayback, startMobilePlayback, startMSEPlayback]);
 
   // Auto-start playback from URL on initial load
   useEffect(() => {

@@ -364,48 +364,85 @@ app.get('/processed/*', (req, res) => {
   proxyReq.end();
 });
 
-// Proxy all go2rtc HLS requests (master playlist, variant playlist, segments)
-app.get('/go2rtc/*', async (req, res) => {
+// Proxy all go2rtc requests (HLS playlists, MP4 streams, segments)
+app.get('/go2rtc/*', (req, res) => {
   // Extract the path after /go2rtc/
   const go2rtcPath = req.path.replace('/go2rtc/', '');
   const queryString = req.url.includes('?') ? req.url.split('?')[1] : '';
   const fullPath = queryString ? `${go2rtcPath}?${queryString}` : go2rtcPath;
+  const proxyUrl = `${GO2RTC_API}/api/${fullPath}`;
 
-  try {
-    const proxyUrl = `${GO2RTC_API}/api/${fullPath}`;
-    console.log('Proxying go2rtc request:', proxyUrl);
+  console.log('Proxying go2rtc request:', proxyUrl);
 
-    const response = await fetch(proxyUrl);
-    if (!response.ok) {
-      console.error('go2rtc proxy error:', response.status, response.statusText);
-      res.status(response.status).send('Request failed');
-      return;
-    }
+  // For MP4 streaming, use Node's http module for proper streaming
+  if (go2rtcPath.startsWith('stream.mp4')) {
+    const proxyReq = http.request(proxyUrl, (proxyRes) => {
+      if (proxyRes.statusCode !== 200) {
+        console.error('go2rtc MP4 proxy error:', proxyRes.statusCode);
+        res.status(proxyRes.statusCode || 502).send('Stream failed');
+        return;
+      }
 
-    // Copy content-type from response
-    const contentType = response.headers.get('content-type');
-    if (contentType) {
-      res.setHeader('Content-Type', contentType);
-    }
-    res.setHeader('Cache-Control', 'no-cache');
+      // Set proper headers for MP4 streaming
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Cache-Control', 'no-cache, no-store');
+      res.setHeader('Connection', 'keep-alive');
 
-    // For m3u8 playlists, rewrite URLs to go through our proxy
-    if (go2rtcPath.endsWith('.m3u8') || contentType?.includes('mpegurl')) {
-      let body = await response.text();
-      // Rewrite relative URLs like "hls/playlist.m3u8?id=xxx" to "/go2rtc/hls/playlist.m3u8?id=xxx"
-      body = body.replace(/(hls\/[^\s]+)/g, '/go2rtc/$1');
-      // Rewrite segment URLs
-      body = body.replace(/segment\.(ts|m4s)\?/g, '/go2rtc/segment.$1?');
-      res.send(body);
-    } else {
-      // For binary content (segments), stream directly
-      const buffer = await response.arrayBuffer();
-      res.send(Buffer.from(buffer));
-    }
-  } catch (err) {
-    console.error('go2rtc proxy error:', err);
-    res.status(502).send('Proxy failed');
+      // Stream the response
+      proxyRes.pipe(res);
+
+      // Handle client disconnect
+      req.on('close', () => {
+        proxyRes.destroy();
+      });
+    });
+
+    proxyReq.on('error', (err) => {
+      console.error('go2rtc MP4 proxy error:', err);
+      if (!res.headersSent) {
+        res.status(502).send('Proxy failed');
+      }
+    });
+
+    proxyReq.end();
+    return;
   }
+
+  // For non-streaming content (playlists, segments), use fetch
+  (async () => {
+    try {
+      const response = await fetch(proxyUrl);
+      if (!response.ok) {
+        console.error('go2rtc proxy error:', response.status, response.statusText);
+        res.status(response.status).send('Request failed');
+        return;
+      }
+
+      // Copy content-type from response
+      const contentType = response.headers.get('content-type');
+      if (contentType) {
+        res.setHeader('Content-Type', contentType);
+      }
+      res.setHeader('Cache-Control', 'no-cache');
+
+      // For m3u8 playlists, rewrite URLs to go through our proxy
+      if (go2rtcPath.endsWith('.m3u8') || contentType?.includes('mpegurl')) {
+        let body = await response.text();
+        // Rewrite relative URLs like "hls/playlist.m3u8?id=xxx" to "/go2rtc/hls/playlist.m3u8?id=xxx"
+        body = body.replace(/(hls\/[^\s]+)/g, '/go2rtc/$1');
+        // Rewrite segment URLs
+        body = body.replace(/segment\.(ts|m4s)\?/g, '/go2rtc/segment.$1?');
+        res.send(body);
+      } else {
+        // For binary content (segments), stream directly
+        const buffer = await response.arrayBuffer();
+        res.send(Buffer.from(buffer));
+      }
+    } catch (err) {
+      console.error('go2rtc proxy error:', err);
+      res.status(502).send('Proxy failed');
+    }
+  })();
 });
 
 // WebSocket connection handling
