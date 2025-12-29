@@ -1153,3 +1153,402 @@ body {
     margin: 0 auto;
   }
 }
+
+/* ==================== Recording Browser ==================== */
+.recordings-btn {
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg-tertiary);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.recordings-btn:hover {
+  background: #1a4980;
+  box-shadow: var(--shadow-sm);
+}
+
+.recording-browser {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 120px);
+  background: var(--glass-bg);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.recording-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: var(--color-bg-tertiary);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.recording-header h2 {
+  font-size: 1.25rem;
+  font-weight: 500;
+}
+
+.recording-filters {
+  display: flex;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-md);
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.filter-group label {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.filter-group select {
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 0.875rem;
+}
+
+.recording-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.recording-list {
+  width: 280px;
+  overflow-y: auto;
+  border-right: 1px solid var(--glass-border);
+  background: var(--color-bg-secondary);
+}
+
+.recording-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-md);
+  cursor: pointer;
+  border-bottom: 1px solid var(--glass-border);
+  transition: background var(--transition-fast);
+}
+
+.recording-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.recording-item.active {
+  background: var(--color-accent);
+}
+
+.recording-time {
+  font-size: 0.875rem;
+}
+
+.recording-duration {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.recording-item.active .recording-duration {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.no-recordings,
+.loading-recordings {
+  padding: var(--spacing-xl);
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.recording-player {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+}
+
+.player-info {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg-tertiary);
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.recording-player video {
+  flex: 1;
+  width: 100%;
+  background: #000;
+}
+
+.player-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  font-size: 1rem;
+}
+
+@media (max-width: 768px) {
+  .recording-content {
+    flex-direction: column;
+  }
+
+  .recording-list {
+    width: 100%;
+    max-height: 200px;
+    border-right: none;
+    border-bottom: 1px solid var(--glass-border);
+  }
+
+  .recording-filters {
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+  }
+}
+
+/* ==================== DVR Playback ==================== */
+.dvr-playback {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 120px);
+  background: var(--glass-bg);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.dvr-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: var(--color-bg-tertiary);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.dvr-header h2 {
+  flex: 1;
+  font-size: 1.25rem;
+  font-weight: 500;
+}
+
+.dvr-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.dvr-controls select,
+.dvr-controls .time-input {
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 0.875rem;
+}
+
+.dvr-controls .date-select {
+  min-width: 130px;
+}
+
+.dvr-controls .channel-select {
+  min-width: 110px;
+}
+
+.dvr-controls .time-input {
+  width: 100px;
+}
+
+.dvr-controls .go-btn {
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: white;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.dvr-controls .go-btn:hover {
+  background: var(--color-accent-hover);
+}
+
+.dvr-controls .go-btn:active {
+  transform: scale(0.97);
+}
+
+.dvr-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.timeline-grid {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-md);
+}
+
+.timeline-hours {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--spacing-sm);
+  position: sticky;
+  top: 0;
+  background: var(--color-bg-primary);
+  z-index: 10;
+  padding: var(--spacing-sm) 0;
+}
+
+.timeline-hours .channel-label {
+  width: 100px;
+  flex-shrink: 0;
+}
+
+.hours-bar {
+  flex: 1;
+  position: relative;
+  height: 20px;
+  font-size: 0.625rem;
+  color: var(--color-text-muted);
+}
+
+.hour-mark {
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+.channel-timeline {
+  display: flex;
+  align-items: center;
+  padding: var(--spacing-xs) 0;
+  border-bottom: 1px solid var(--glass-border);
+  transition: background var(--transition-fast);
+}
+
+.channel-timeline:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.channel-timeline.selected {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.channel-timeline .channel-label {
+  width: 100px;
+  flex-shrink: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.timeline-bar {
+  flex: 1;
+  height: 32px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-xs);
+  position: relative;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.timeline-bar:hover {
+  background: var(--color-bg-secondary);
+}
+
+.recording-segment {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 2px;
+  transition: opacity var(--transition-fast);
+}
+
+.recording-segment.continuous {
+  background: var(--color-success);
+  opacity: 0.7;
+}
+
+.recording-segment.motion {
+  background: var(--color-warning);
+  opacity: 0.8;
+}
+
+.recording-segment:hover {
+  opacity: 1;
+}
+
+.current-time-indicator {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--color-error);
+  z-index: 5;
+}
+
+.loading-timelines {
+  padding: var(--spacing-xl);
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.dvr-player {
+  width: 450px;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  border-left: 1px solid var(--glass-border);
+}
+
+.dvr-player .player-info {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg-tertiary);
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.dvr-player video {
+  flex: 1;
+  width: 100%;
+  background: #000;
+}
+
+.dvr-player .player-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  font-size: 1rem;
+}
+
+@media (max-width: 1024px) {
+  .dvr-content {
+    flex-direction: column;
+  }
+
+  .dvr-player {
+    width: 100%;
+    height: 300px;
+    border-left: none;
+    border-top: 1px solid var(--glass-border);
+  }
+}

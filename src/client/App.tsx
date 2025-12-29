@@ -5,11 +5,13 @@ import PictureInPicture from './components/camera/PictureInPicture';
 import Settings from './components/Settings';
 import LayoutSelector from './components/layout/LayoutSelector';
 import ToastContainer from './components/common/ToastContainer';
+import RecordingBrowser from './components/recordings/RecordingBrowser';
+import DVRPlayback from './components/dvr/DVRPlayback';
 import { ToastProvider, useToast } from './contexts/ToastContext';
 import { LayoutProvider } from './contexts/LayoutContext';
 import type { CameraConfig } from '@shared/types';
 
-type View = 'grid' | 'fullscreen' | 'settings';
+type View = 'grid' | 'fullscreen' | 'settings' | 'recordings' | 'dvr';
 
 interface PiPState {
   channelId: number;
@@ -118,6 +120,12 @@ function AppContent() {
         <h1>Camera Viewer</h1>
         <div className="header-controls">
           {view === 'grid' && <LayoutSelector />}
+          <button className="recordings-btn" onClick={() => setView('dvr')}>
+            DVR Playback
+          </button>
+          <button className="recordings-btn" onClick={() => setView('recordings')}>
+            Processed
+          </button>
           <button className="settings-btn" onClick={handleOpenSettings}>
             Settings
           </button>
@@ -149,6 +157,10 @@ function AppContent() {
         )}
 
         {view === 'settings' && <Settings onClose={handleCloseSettings} />}
+
+        {view === 'recordings' && <RecordingBrowser onBack={() => setView('grid')} />}
+
+        {view === 'dvr' && <DVRPlayback onBack={() => setView('grid')} />}
       </main>
 
       {pip && (
