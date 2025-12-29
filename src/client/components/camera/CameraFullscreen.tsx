@@ -90,7 +90,7 @@ export default function CameraFullscreen({
   useEffect(() => {
     if (!canvasRef.current) return;
 
-    const wsUrl = `ws://${window.location.hostname}:3002?channel=${channelId}&quality=high&audio=${audioEnabled}`;
+    const wsUrl = `ws://${window.location.host}?channel=${channelId}&quality=high&audio=${audioEnabled}`;
 
     const timer = setTimeout(() => {
       if (!canvasRef.current) return;

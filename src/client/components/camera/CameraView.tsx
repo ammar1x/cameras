@@ -54,7 +54,7 @@ export default function CameraView({
     if (!canvasRef.current) return;
 
     setStatus('connecting');
-    const wsUrl = `ws://${window.location.hostname}:3002?channel=${channelId}&quality=${quality}`;
+    const wsUrl = `ws://${window.location.host}?channel=${channelId}&quality=${quality}`;
 
     try {
       playerRef.current = new window.JSMpeg.Player(wsUrl, {

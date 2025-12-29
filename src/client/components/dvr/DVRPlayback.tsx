@@ -1,4 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import VideoPlayerOverlay from './VideoPlayerOverlay';
+import TimelineSidebar from './TimelineSidebar';
+import { useFullscreen } from '../../hooks/useFullscreen';
+import { useControlsVisibility } from '../../hooks/useControlsVisibility';
 
 interface Recording {
   startTime: string;
@@ -18,6 +22,7 @@ interface Props {
 }
 
 export default function DVRPlayback({ onBack }: Props) {
+  // Existing state
   const [selectedDate, setSelectedDate] = useState<string>(() => {
     const now = new Date();
     return now.toISOString().slice(0, 10).replace(/-/g, '');
@@ -26,18 +31,25 @@ export default function DVRPlayback({ onBack }: Props) {
   const [loading, setLoading] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState<number | null>(null);
   const [playbackTime, setPlaybackTime] = useState<string | null>(null);
-  const [streamInfo, setStreamInfo] = useState<{
-    streamName: string;
-  } | null>(null);
+  const [streamInfo, setStreamInfo] = useState<{ streamName: string } | null>(null);
   const [playbackStatus, setPlaybackStatus] = useState<string>('');
-  const [selectedTime, setSelectedTime] = useState<string>('12:00');
-  const [jumpChannel, setJumpChannel] = useState<number>(1);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [currentPlaybackTime, setCurrentPlaybackTime] = useState<Date | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  // New state for layout
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const mediaSourceRef = useRef<MediaSource | null>(null);
   const sourceBufferRef = useRef<SourceBuffer | null>(null);
+
+  // Hooks
+  const { isFullscreen, toggleFullscreen } = useFullscreen(containerRef);
+  const { visible: controlsVisible, showControls, lockVisible, unlockVisible } = useControlsVisibility(3000);
 
   const channels = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
@@ -70,13 +82,22 @@ export default function DVRPlayback({ onBack }: Props) {
     fetchAllChannels();
   }, [selectedDate]);
 
-  // Convert time string to hour position (0-24)
-  const timeToPosition = (timeStr: string): number => {
-    const match = timeStr.match(/(\d{2}):(\d{2}):(\d{2})$/);
-    if (!match) return 0;
-    const [, h, m, s] = match;
-    return parseInt(h) + parseInt(m) / 60 + parseInt(s) / 3600;
-  };
+  // Track video play state
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const handlePlay = () => setIsPlaying(true);
+    const handlePause = () => setIsPlaying(false);
+
+    video.addEventListener('play', handlePlay);
+    video.addEventListener('pause', handlePause);
+
+    return () => {
+      video.removeEventListener('play', handlePlay);
+      video.removeEventListener('pause', handlePause);
+    };
+  }, []);
 
   // Stop current playback
   const stopPlayback = useCallback(() => {
@@ -96,11 +117,11 @@ export default function DVRPlayback({ onBack }: Props) {
     }
     sourceBufferRef.current = null;
     mediaSourceRef.current = null;
+    setIsPlaying(false);
   }, []);
 
   // Start MSE playback via go2rtc
   const startPlayback = useCallback(async (channel: number, startTime: string, endTime: string) => {
-    // Stop any existing playback
     stopPlayback();
     if (streamInfo) {
       await fetch(`/api/dvr/playback/${streamInfo.streamName}`, { method: 'DELETE' }).catch(() => {});
@@ -109,7 +130,6 @@ export default function DVRPlayback({ onBack }: Props) {
     setPlaybackStatus('Connecting...');
 
     try {
-      // Create playback stream in go2rtc
       const res = await fetch('/api/dvr/playback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -125,14 +145,11 @@ export default function DVRPlayback({ onBack }: Props) {
       setStreamInfo(info);
       setPlaybackStatus('Loading stream...');
 
-      // Use proxied WebSocket to go2rtc (avoids CORS issues)
       const wsUrl = `ws://${window.location.host}/go2rtc/ws?src=${info.streamName}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
-
       ws.binaryType = 'arraybuffer';
 
-      // Set up MediaSource
       const mediaSource = new MediaSource();
       mediaSourceRef.current = mediaSource;
 
@@ -159,7 +176,6 @@ export default function DVRPlayback({ onBack }: Props) {
         }
       };
 
-      // Only send MSE request when both WebSocket and MediaSource are ready
       const tryStartMSE = () => {
         if (wsReady && mediaSourceReady && ws.readyState === WebSocket.OPEN) {
           console.log('Sending MSE request to go2rtc...');
@@ -179,26 +195,20 @@ export default function DVRPlayback({ onBack }: Props) {
         tryStartMSE();
       });
 
-      // Attach MediaSource to video after setting up event handlers
       if (videoRef.current) {
         videoRef.current.src = URL.createObjectURL(mediaSource);
       }
 
       ws.onmessage = (event) => {
-        // With binaryType='arraybuffer', all data comes as ArrayBuffer
-        // First message is JSON text, rest are binary video data
         if (event.data instanceof ArrayBuffer) {
           const data = event.data as ArrayBuffer;
-
-          // Check if this looks like JSON (starts with '{')
           const firstByte = new Uint8Array(data)[0];
-          if (firstByte === 123) { // '{' character
-            // This is JSON text - decode and parse
+
+          if (firstByte === 123) {
             const text = new TextDecoder().decode(data);
             try {
               const msg = JSON.parse(text);
               if (msg.type === 'error') {
-                // go2rtc returned an error (e.g., RTSP 404 - no recording at this time)
                 console.error('go2rtc error:', msg.value);
                 hasError = true;
                 const errorMsg = msg.value || 'Stream error';
@@ -209,7 +219,6 @@ export default function DVRPlayback({ onBack }: Props) {
                 }
                 ws.close();
               } else if (msg.type === 'mse') {
-                // Got codec info, create source buffer
                 const mimeType = msg.value;
                 console.log('MSE codec:', mimeType);
 
@@ -237,7 +246,6 @@ export default function DVRPlayback({ onBack }: Props) {
               console.error('Error parsing JSON:', e);
             }
           } else {
-            // Binary video data
             queue.push(data);
             appendBuffer();
           }
@@ -250,13 +258,11 @@ export default function DVRPlayback({ onBack }: Props) {
       };
 
       ws.onclose = () => {
-        // Don't overwrite error status if we already handled an error
         if (!hasError) {
           setPlaybackStatus('Stream ended');
         }
       };
 
-      // Start video playback when enough data
       if (videoRef.current) {
         videoRef.current.oncanplay = () => {
           videoRef.current?.play().catch(() => {});
@@ -269,25 +275,8 @@ export default function DVRPlayback({ onBack }: Props) {
     }
   }, [streamInfo, stopPlayback]);
 
-  // Handle jumping to a specific time
-  const handleJumpToTime = () => {
-    const [hour, minute] = selectedTime.split(':').map(Number);
-    const year = selectedDate.slice(0, 4);
-    const month = selectedDate.slice(4, 6);
-    const day = selectedDate.slice(6, 8);
-
-    const startTime = `${year}-${month}-${day} ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`;
-    const endHour = Math.min(hour + 1, 23);
-    const endTime = `${year}-${month}-${day} ${endHour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`;
-
-    setSelectedChannel(jumpChannel);
-    setPlaybackTime(startTime);
-    setCurrentPlaybackTime(new Date(`${year}-${month}-${day}T${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`));
-    startPlayback(jumpChannel, startTime, endTime);
-  };
-
   // Skip forward or backward by seconds
-  const handleSkip = (seconds: number) => {
+  const handleSkip = useCallback((seconds: number) => {
     if (!currentPlaybackTime || !selectedChannel) return;
 
     const newTime = new Date(currentPlaybackTime.getTime() + seconds * 1000);
@@ -305,18 +294,29 @@ export default function DVRPlayback({ onBack }: Props) {
     setPlaybackTime(startTime);
     setCurrentPlaybackTime(newTime);
     startPlayback(selectedChannel, startTime, endTime);
-  };
+  }, [currentPlaybackTime, selectedChannel, startPlayback]);
 
-  // Change playback speed
-  const handleSpeedChange = (speed: number) => {
+  // Play/Pause toggle
+  const handlePlayPause = useCallback(() => {
+    if (videoRef.current) {
+      if (videoRef.current.paused) {
+        videoRef.current.play().catch(() => {});
+      } else {
+        videoRef.current.pause();
+      }
+    }
+  }, []);
+
+  // Speed change
+  const handleSpeedChange = useCallback((speed: number) => {
     setPlaybackSpeed(speed);
     if (videoRef.current) {
       videoRef.current.playbackRate = speed;
     }
-  };
+  }, []);
 
   // Handle timeline click
-  const handleTimelineClick = (channel: number, e: React.MouseEvent<HTMLDivElement>) => {
+  const handleTimelineClick = useCallback((channel: number, e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const percent = x / rect.width;
@@ -335,30 +335,22 @@ export default function DVRPlayback({ onBack }: Props) {
     setPlaybackTime(startTime);
     setCurrentPlaybackTime(new Date(`${year}-${month}-${day}T${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`));
     startPlayback(channel, startTime, endTime);
-  };
+  }, [selectedDate, startPlayback]);
 
-  // Store streamInfo in a ref for cleanup to avoid dependency issues
+  // Cleanup refs
   const streamInfoRef = useRef<{ streamName: string } | null>(null);
   useEffect(() => {
     streamInfoRef.current = streamInfo;
   }, [streamInfo]);
 
-  // Track if component is mounted to handle StrictMode properly
   const isMountedRef = useRef(true);
-
-  // Cleanup on unmount only (empty deps) with delay to handle StrictMode
   useEffect(() => {
     isMountedRef.current = true;
-
     return () => {
       isMountedRef.current = false;
-
-      // Delay cleanup to allow StrictMode remount to cancel it
       const wsToClose = wsRef.current;
       const streamToDelete = streamInfoRef.current;
-
       setTimeout(() => {
-        // Only cleanup if still unmounted after delay
         if (!isMountedRef.current) {
           if (wsToClose && wsToClose.readyState !== WebSocket.CLOSED) {
             wsToClose.close();
@@ -371,143 +363,68 @@ export default function DVRPlayback({ onBack }: Props) {
     };
   }, []);
 
-  const formatDate = (dateStr: string) => {
-    return `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`;
-  };
+  const hasContent = selectedChannel !== null;
 
   return (
-    <div className="dvr-playback">
-      <div className="dvr-header">
-        <button className="back-btn" onClick={onBack}>
-          &larr; Back
-        </button>
-        <h2>DVR Playback</h2>
-        <div className="dvr-controls">
-          <select
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            className="date-select"
-          >
-            {dates.map((date) => (
-              <option key={date} value={date}>
-                {formatDate(date)}
-              </option>
-            ))}
-          </select>
-          <select
-            value={jumpChannel}
-            onChange={(e) => setJumpChannel(Number(e.target.value))}
-            className="channel-select"
-          >
-            {channels.map((ch) => (
-              <option key={ch} value={ch}>
-                Camera {ch}
-              </option>
-            ))}
-          </select>
-          <input
-            type="time"
-            value={selectedTime}
-            onChange={(e) => setSelectedTime(e.target.value)}
-            className="time-input"
-          />
-          <button className="go-btn" onClick={handleJumpToTime}>
-            Go
-          </button>
-        </div>
-      </div>
-
-      <div className="dvr-content">
-        <div className="timeline-grid">
-          {/* Hour markers */}
-          <div className="timeline-hours">
-            <div className="channel-label"></div>
-            <div className="hours-bar">
-              {Array.from({ length: 25 }, (_, i) => (
-                <span key={i} className="hour-mark" style={{ left: `${(i / 24) * 100}%` }}>
-                  {i.toString().padStart(2, '0')}
-                </span>
-              ))}
+    <div className="dvr-playback-new">
+      {/* Main video container */}
+      <div
+        ref={containerRef}
+        className={`dvr-player-container ${sidebarCollapsed ? 'sidebar-hidden' : ''}`}
+      >
+        {hasContent ? (
+          <>
+            <video
+              ref={videoRef}
+              className="dvr-video"
+              playsInline
+              muted
+            />
+            <VideoPlayerOverlay
+              videoRef={videoRef}
+              visible={controlsVisible}
+              onMouseMove={showControls}
+              onMouseLeave={() => {}}
+              onControlsHover={lockVisible}
+              onControlsLeave={unlockVisible}
+              isPlaying={isPlaying}
+              onPlayPause={handlePlayPause}
+              onSkip={handleSkip}
+              playbackSpeed={playbackSpeed}
+              onSpeedChange={handleSpeedChange}
+              onToggleFullscreen={toggleFullscreen}
+              isFullscreen={isFullscreen}
+              onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+              sidebarOpen={!sidebarCollapsed}
+              channelName={`Camera ${selectedChannel}`}
+              playbackTime={playbackTime}
+              playbackStatus={playbackStatus}
+              onBack={onBack}
+              disabled={!hasContent}
+            />
+          </>
+        ) : (
+          <div className="player-placeholder-new">
+            <div className="placeholder-content">
+              <span className="placeholder-icon">📹</span>
+              <span className="placeholder-text">Select a recording from the timeline</span>
             </div>
           </div>
-
-          {/* Channel timelines */}
-          {loading ? (
-            <div className="loading-timelines">Loading...</div>
-          ) : (
-            channelData.map(({ channel, recordings }) => (
-              <div
-                key={channel}
-                className={`channel-timeline ${selectedChannel === channel ? 'selected' : ''}`}
-              >
-                <div className="channel-label">Camera {channel}</div>
-                <div
-                  className="timeline-bar"
-                  onClick={(e) => handleTimelineClick(channel, e)}
-                >
-                  {recordings.map((rec, idx) => {
-                    const start = timeToPosition(rec.startTime);
-                    const end = timeToPosition(rec.endTime);
-                    const left = (start / 24) * 100;
-                    const width = ((end - start) / 24) * 100;
-                    return (
-                      <div
-                        key={idx}
-                        className={`recording-segment ${rec.type === 'dav' ? 'continuous' : 'motion'}`}
-                        style={{ left: `${left}%`, width: `${width}%` }}
-                        title={`${rec.startTime} - ${rec.endTime}`}
-                      />
-                    );
-                  })}
-                  {/* Current time indicator */}
-                  <div
-                    className="current-time-indicator"
-                    style={{ left: `${(new Date().getHours() + new Date().getMinutes() / 60) / 24 * 100}%` }}
-                  />
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* Video player */}
-        <div className="dvr-player">
-          {selectedChannel ? (
-            <>
-              <div className="player-info">
-                <span>Camera {selectedChannel}</span>
-                {playbackTime && <span>{playbackTime}</span>}
-                {playbackStatus && <span className="playback-status">{playbackStatus}</span>}
-              </div>
-              <video ref={videoRef} controls autoPlay playsInline muted />
-              <div className="player-controls">
-                <div className="skip-controls">
-                  <button onClick={() => handleSkip(-60)} title="Back 1 min">-1m</button>
-                  <button onClick={() => handleSkip(-10)} title="Back 10 sec">-10s</button>
-                  <button onClick={() => handleSkip(10)} title="Forward 10 sec">+10s</button>
-                  <button onClick={() => handleSkip(60)} title="Forward 1 min">+1m</button>
-                </div>
-                <div className="speed-controls">
-                  <span className="speed-label">Speed:</span>
-                  {[0.5, 1, 1.5, 2, 4].map((speed) => (
-                    <button
-                      key={speed}
-                      onClick={() => handleSpeedChange(speed)}
-                      className={playbackSpeed === speed ? 'active' : ''}
-                    >
-                      {speed}x
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="player-placeholder">
-              Click on a timeline to start playback
-            </div>
-          )}
-        </div>
+        )}
       </div>
+
+      {/* Timeline sidebar */}
+      <TimelineSidebar
+        collapsed={sidebarCollapsed}
+        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        selectedDate={selectedDate}
+        onDateChange={setSelectedDate}
+        dates={dates}
+        channelData={channelData}
+        selectedChannel={selectedChannel}
+        onTimelineClick={handleTimelineClick}
+        loading={loading}
+      />
     </div>
   );
 }
