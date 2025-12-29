@@ -18,13 +18,98 @@ interface PiPState {
   channelName: string;
 }
 
+interface DVRState {
+  channel?: number;
+  date?: string;
+  time?: string;
+}
+
+// Parse hash to determine view and state
+function parseHash(): { view: View; selectedChannel?: number; dvrState?: DVRState } {
+  const hash = window.location.hash.slice(1) || '/';
+  const parts = hash.split('/').filter(Boolean);
+
+  if (parts.length === 0 || parts[0] === 'grid') {
+    return { view: 'grid' };
+  }
+
+  if (parts[0] === 'fullscreen' && parts[1]) {
+    return { view: 'fullscreen', selectedChannel: parseInt(parts[1], 10) };
+  }
+
+  if (parts[0] === 'settings') {
+    return { view: 'settings' };
+  }
+
+  if (parts[0] === 'recordings') {
+    return { view: 'recordings' };
+  }
+
+  if (parts[0] === 'dvr') {
+    const dvrState: DVRState = {};
+    if (parts[1]) dvrState.channel = parseInt(parts[1], 10);
+    if (parts[2]) dvrState.date = parts[2];
+    if (parts[3]) dvrState.time = parts[3].replace(/-/g, ':');
+    return { view: 'dvr', dvrState };
+  }
+
+  return { view: 'grid' };
+}
+
 function AppContent() {
   const [channels, setChannels] = useState<CameraConfig[]>([]);
-  const [view, setView] = useState<View>('grid');
-  const [selectedChannel, setSelectedChannel] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [pip, setPip] = useState<PiPState | null>(null);
   const { addToast } = useToast();
+
+  // Initialize state from URL hash
+  const initialState = parseHash();
+  const [view, setView] = useState<View>(initialState.view);
+  const [selectedChannel, setSelectedChannel] = useState<number | null>(
+    initialState.selectedChannel ?? null
+  );
+  const [dvrState, setDvrState] = useState<DVRState | undefined>(initialState.dvrState);
+
+  // Update hash when view changes
+  const updateHash = useCallback((newView: View, channel?: number, dvr?: DVRState) => {
+    let hash = '#/';
+    switch (newView) {
+      case 'grid':
+        hash = '#/grid';
+        break;
+      case 'fullscreen':
+        hash = `#/fullscreen/${channel}`;
+        break;
+      case 'settings':
+        hash = '#/settings';
+        break;
+      case 'recordings':
+        hash = '#/recordings';
+        break;
+      case 'dvr':
+        if (dvr?.channel && dvr?.date && dvr?.time) {
+          hash = `#/dvr/${dvr.channel}/${dvr.date}/${dvr.time.replace(/:/g, '-')}`;
+        } else {
+          hash = '#/dvr';
+        }
+        break;
+    }
+    if (window.location.hash !== hash) {
+      window.location.hash = hash;
+    }
+  }, []);
+
+  // Listen for hash changes (browser back/forward)
+  useEffect(() => {
+    const handleHashChange = () => {
+      const parsed = parseHash();
+      setView(parsed.view);
+      setSelectedChannel(parsed.selectedChannel ?? null);
+      setDvrState(parsed.dvrState);
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   const fetchChannels = useCallback(async () => {
     try {
@@ -46,6 +131,7 @@ function AppContent() {
   const handleCameraClick = (channelId: number) => {
     setSelectedChannel(channelId);
     setView('fullscreen');
+    updateHash('fullscreen', channelId);
   };
 
   const handlePrevCamera = () => {
@@ -72,14 +158,17 @@ function AppContent() {
   const handleBackToGrid = () => {
     setSelectedChannel(null);
     setView('grid');
+    updateHash('grid');
   };
 
   const handleOpenSettings = () => {
     setView('settings');
+    updateHash('settings');
   };
 
   const handleCloseSettings = () => {
     setView('grid');
+    updateHash('grid');
     fetchChannels();
     addToast('success', 'Settings saved');
   };
@@ -120,10 +209,10 @@ function AppContent() {
         <h1>Camera Viewer</h1>
         <div className="header-controls">
           {view === 'grid' && <LayoutSelector />}
-          <button className="recordings-btn" onClick={() => setView('dvr')}>
+          <button className="recordings-btn" onClick={() => { setView('dvr'); updateHash('dvr'); }}>
             DVR Playback
           </button>
-          <button className="recordings-btn" onClick={() => setView('recordings')}>
+          <button className="recordings-btn" onClick={() => { setView('recordings'); updateHash('recordings'); }}>
             Processed
           </button>
           <button className="settings-btn" onClick={handleOpenSettings}>
@@ -158,9 +247,21 @@ function AppContent() {
 
         {view === 'settings' && <Settings onClose={handleCloseSettings} />}
 
-        {view === 'recordings' && <RecordingBrowser onBack={() => setView('grid')} />}
+        {view === 'recordings' && <RecordingBrowser onBack={() => { setView('grid'); updateHash('grid'); }} />}
 
-        {view === 'dvr' && <DVRPlayback onBack={() => setView('grid')} />}
+        {view === 'dvr' && (
+          <DVRPlayback
+            onBack={() => { setView('grid'); updateHash('grid'); }}
+            initialChannel={dvrState?.channel}
+            initialDate={dvrState?.date}
+            initialTime={dvrState?.time}
+            onStateChange={(channel, date, time) => {
+              const newDvrState = { channel, date, time };
+              setDvrState(newDvrState);
+              updateHash('dvr', undefined, newDvrState);
+            }}
+          />
+        )}
       </main>
 
       {pip && (

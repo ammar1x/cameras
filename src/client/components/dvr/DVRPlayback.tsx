@@ -19,17 +19,22 @@ interface ChannelRecordings {
 
 interface Props {
   onBack: () => void;
+  initialChannel?: number;
+  initialDate?: string;
+  initialTime?: string;
+  onStateChange?: (channel: number, date: string, time: string) => void;
 }
 
-export default function DVRPlayback({ onBack }: Props) {
-  // Existing state
+export default function DVRPlayback({ onBack, initialChannel, initialDate, initialTime, onStateChange }: Props) {
+  // Existing state - initialize from props if available
   const [selectedDate, setSelectedDate] = useState<string>(() => {
+    if (initialDate) return initialDate;
     const now = new Date();
     return now.toISOString().slice(0, 10).replace(/-/g, '');
   });
   const [channelData, setChannelData] = useState<ChannelRecordings[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedChannel, setSelectedChannel] = useState<number | null>(null);
+  const [selectedChannel, setSelectedChannel] = useState<number | null>(initialChannel ?? null);
   const [playbackTime, setPlaybackTime] = useState<string | null>(null);
   const [streamInfo, setStreamInfo] = useState<{ streamName: string } | null>(null);
   const [playbackStatus, setPlaybackStatus] = useState<string>('');
@@ -59,6 +64,9 @@ export default function DVRPlayback({ onBack }: Props) {
     d.setDate(d.getDate() - i);
     return d.toISOString().slice(0, 10).replace(/-/g, '');
   });
+
+  // Track if we've initialized from URL
+  const initializedRef = useRef(false);
 
   // Fetch recordings for all channels
   useEffect(() => {
@@ -137,12 +145,24 @@ export default function DVRPlayback({ onBack }: Props) {
 
     setPlaybackStatus('Connecting...');
 
+    // Check MediaSource support early
+    if (typeof MediaSource === 'undefined') {
+      setPlaybackStatus('MediaSource not supported on this browser');
+      return;
+    }
+
     try {
       const res = await fetch('/api/dvr/playback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channel, startTime, endTime }),
       });
+
+      if (!res.ok) {
+        setPlaybackStatus(`Server error: ${res.status}`);
+        return;
+      }
+
       const info = await res.json();
 
       if (info.error) {
@@ -191,9 +211,19 @@ export default function DVRPlayback({ onBack }: Props) {
         }
       };
 
+      // Connection timeout
+      const connectionTimeout = setTimeout(() => {
+        if (!wsReady || !mediaSourceReady) {
+          console.error('Connection timeout');
+          setPlaybackStatus('Connection timeout');
+          ws.close();
+        }
+      }, 10000);
+
       ws.onopen = () => {
         console.log('WebSocket connected to go2rtc proxy');
         wsReady = true;
+        clearTimeout(connectionTimeout);
         tryStartMSE();
       };
 
@@ -204,6 +234,10 @@ export default function DVRPlayback({ onBack }: Props) {
       });
 
       if (videoRef.current) {
+        // Set oncanplay BEFORE src to avoid race condition
+        videoRef.current.oncanplay = () => {
+          videoRef.current?.play().catch(() => {});
+        };
         videoRef.current.src = URL.createObjectURL(mediaSource);
       }
 
@@ -271,17 +305,42 @@ export default function DVRPlayback({ onBack }: Props) {
         }
       };
 
-      if (videoRef.current) {
-        videoRef.current.oncanplay = () => {
-          videoRef.current?.play().catch(() => {});
-        };
-      }
-
     } catch (err) {
       console.error('Failed to start playback:', err);
-      setPlaybackStatus('Failed to start playback');
+      const errMsg = err instanceof Error ? err.message : 'Unknown error';
+      if (errMsg.includes('fetch') || errMsg.includes('network')) {
+        setPlaybackStatus('Network error - check connection');
+      } else {
+        setPlaybackStatus(`Playback error: ${errMsg}`);
+      }
     }
   }, [streamInfo, stopPlayback]);
+
+  // Auto-start playback from URL on initial load
+  useEffect(() => {
+    if (initializedRef.current) return;
+    if (!initialChannel || !initialDate || !initialTime) return;
+
+    initializedRef.current = true;
+
+    // Parse time and start playback
+    const year = initialDate.slice(0, 4);
+    const month = initialDate.slice(4, 6);
+    const day = initialDate.slice(6, 8);
+    const [hour, minute] = initialTime.split(':').map(Number);
+
+    const startTimeStr = `${year}-${month}-${day} ${initialTime}`;
+    const endHour = Math.min(hour + 1, 23);
+    const endTimeStr = `${year}-${month}-${day} ${endHour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`;
+
+    setPlaybackTime(startTimeStr);
+    setCurrentPlaybackTime(new Date(`${year}-${month}-${day}T${initialTime}`));
+
+    // Delay to allow component to mount
+    setTimeout(() => {
+      startPlayback(initialChannel, startTimeStr, endTimeStr);
+    }, 100);
+  }, [initialChannel, initialDate, initialTime, startPlayback]);
 
   // Skip forward or backward by seconds
   const handleSkip = useCallback((seconds: number) => {
@@ -295,14 +354,19 @@ export default function DVRPlayback({ onBack }: Props) {
     const minute = newTime.getMinutes();
     const second = newTime.getSeconds();
 
-    const startTime = `${year}-${month}-${day} ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`;
+    const timeStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`;
+    const startTime = `${year}-${month}-${day} ${timeStr}`;
     const endHour = Math.min(hour + 1, 23);
     const endTime = `${year}-${month}-${day} ${endHour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`;
 
     setPlaybackTime(startTime);
     setCurrentPlaybackTime(newTime);
     startPlayback(selectedChannel, startTime, endTime);
-  }, [currentPlaybackTime, selectedChannel, startPlayback]);
+
+    // Update URL
+    const dateStr = `${year}${month}${day}`;
+    onStateChange?.(selectedChannel, dateStr, timeStr);
+  }, [currentPlaybackTime, selectedChannel, startPlayback, onStateChange]);
 
   // Play/Pause toggle
   const handlePlayPause = useCallback(() => {
@@ -342,7 +406,11 @@ export default function DVRPlayback({ onBack }: Props) {
     setPlaybackTime(startTime);
     setCurrentPlaybackTime(newTime);
     startPlayback(selectedChannel, startTime, endTime);
-  }, [selectedChannel, startPlayback]);
+
+    // Update URL
+    const dateStr = `${year}${month}${day}`;
+    onStateChange?.(selectedChannel, dateStr, timePart);
+  }, [selectedChannel, startPlayback, onStateChange]);
 
   // Handle timeline click
   const handleTimelineClick = useCallback((channel: number, e: React.MouseEvent<HTMLDivElement>) => {
@@ -356,15 +424,19 @@ export default function DVRPlayback({ onBack }: Props) {
     const month = selectedDate.slice(4, 6);
     const day = selectedDate.slice(6, 8);
 
-    const startTime = `${year}-${month}-${day} ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`;
+    const timeStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`;
+    const startTime = `${year}-${month}-${day} ${timeStr}`;
     const endHour = hour + 1;
     const endTime = `${year}-${month}-${day} ${endHour.toString().padStart(2, '0')}:00:00`;
 
     setSelectedChannel(channel);
     setPlaybackTime(startTime);
-    setCurrentPlaybackTime(new Date(`${year}-${month}-${day}T${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`));
+    setCurrentPlaybackTime(new Date(`${year}-${month}-${day}T${timeStr}`));
     startPlayback(channel, startTime, endTime);
-  }, [selectedDate, startPlayback]);
+
+    // Update URL
+    onStateChange?.(channel, selectedDate, timeStr);
+  }, [selectedDate, startPlayback, onStateChange]);
 
   // Cleanup refs
   const streamInfoRef = useRef<{ streamName: string } | null>(null);
