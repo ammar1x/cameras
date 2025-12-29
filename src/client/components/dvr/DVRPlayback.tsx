@@ -1,8 +1,24 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import Hls from 'hls.js';
 import VideoPlayerOverlay from './VideoPlayerOverlay';
 import TimelineSidebar from './TimelineSidebar';
 import { useFullscreen } from '../../hooks/useFullscreen';
 import { useControlsVisibility } from '../../hooks/useControlsVisibility';
+
+// Check if device needs HLS (iOS doesn't support MSE)
+const needsHLS = () => {
+  // iOS Safari doesn't support MSE
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  // Check if MSE is available
+  const hasMSE = typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('video/mp4; codecs="avc1.640029"');
+  return isIOS || !hasMSE;
+};
+
+// Check if browser has native HLS support (Safari)
+const hasNativeHLS = () => {
+  const video = document.createElement('video');
+  return video.canPlayType('application/vnd.apple.mpegurl') !== '';
+};
 
 interface Recording {
   startTime: string;
@@ -51,6 +67,7 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
   const wsRef = useRef<WebSocket | null>(null);
   const mediaSourceRef = useRef<MediaSource | null>(null);
   const sourceBufferRef = useRef<SourceBuffer | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
 
   // Hooks
   const { isFullscreen, toggleFullscreen } = useFullscreen(containerRef);
@@ -117,6 +134,7 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
 
   // Stop current playback
   const stopPlayback = useCallback(() => {
+    // Clean up WebSocket/MSE
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -128,6 +146,11 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
         // Ignore
       }
     }
+    // Clean up HLS
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
     if (videoRef.current) {
       videoRef.current.src = '';
     }
@@ -136,7 +159,195 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
     setIsPlaying(false);
   }, []);
 
-  // Start MSE playback via go2rtc
+  // Start HLS playback for mobile devices
+  const startHLSPlayback = useCallback((streamName: string) => {
+    if (!videoRef.current) return;
+
+    const hlsUrl = `/go2rtc/stream.m3u8?src=${streamName}`;
+    console.log('Starting HLS playback:', hlsUrl);
+
+    if (hasNativeHLS()) {
+      // Safari has native HLS support
+      console.log('Using native HLS');
+      videoRef.current.src = hlsUrl;
+      videoRef.current.oncanplay = () => {
+        videoRef.current?.play().catch(() => {});
+      };
+      videoRef.current.onerror = () => {
+        setPlaybackStatus('HLS playback failed');
+      };
+      setPlaybackStatus('Playing');
+    } else if (Hls.isSupported()) {
+      // Use hls.js for other browsers
+      console.log('Using hls.js');
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+      });
+      hlsRef.current = hls;
+
+      hls.loadSource(hlsUrl);
+      hls.attachMedia(videoRef.current);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        videoRef.current?.play().catch(() => {});
+        setPlaybackStatus('Playing');
+      });
+
+      hls.on(Hls.Events.ERROR, (event, data) => {
+        console.error('HLS error:', data);
+        if (data.fatal) {
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            setPlaybackStatus('Network error');
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            setPlaybackStatus('Media error');
+            hls.recoverMediaError();
+          } else {
+            setPlaybackStatus('HLS playback failed');
+          }
+        }
+      });
+    } else {
+      setPlaybackStatus('No supported playback method');
+    }
+  }, []);
+
+  // Start MSE playback via go2rtc (for desktop browsers)
+  const startMSEPlayback = useCallback((streamName: string) => {
+    if (!videoRef.current) return;
+
+    const wsUrl = `ws://${window.location.host}/go2rtc/ws?src=${streamName}`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+    ws.binaryType = 'arraybuffer';
+
+    const mediaSource = new MediaSource();
+    mediaSourceRef.current = mediaSource;
+
+    let sourceBuffer: SourceBuffer | null = null;
+    const queue: ArrayBuffer[] = [];
+    let isAppending = false;
+    let wsReady = false;
+    let mediaSourceReady = false;
+    let hasError = false;
+
+    const appendBuffer = () => {
+      if (!sourceBuffer || isAppending || queue.length === 0) return;
+      if (sourceBuffer.updating) return;
+
+      isAppending = true;
+      const data = queue.shift();
+      if (data) {
+        try {
+          sourceBuffer.appendBuffer(data);
+        } catch (e) {
+          console.error('Error appending buffer:', e);
+          isAppending = false;
+        }
+      }
+    };
+
+    const tryStartMSE = () => {
+      if (wsReady && mediaSourceReady && ws.readyState === WebSocket.OPEN) {
+        console.log('Sending MSE request to go2rtc...');
+        ws.send(JSON.stringify({ type: 'mse' }));
+      }
+    };
+
+    // Connection timeout
+    const connectionTimeout = setTimeout(() => {
+      if (!wsReady || !mediaSourceReady) {
+        console.error('Connection timeout');
+        setPlaybackStatus('Connection timeout');
+        ws.close();
+      }
+    }, 10000);
+
+    ws.onopen = () => {
+      console.log('WebSocket connected to go2rtc proxy');
+      wsReady = true;
+      clearTimeout(connectionTimeout);
+      tryStartMSE();
+    };
+
+    mediaSource.addEventListener('sourceopen', () => {
+      console.log('MediaSource is ready');
+      mediaSourceReady = true;
+      tryStartMSE();
+    });
+
+    // Set oncanplay BEFORE src to avoid race condition
+    videoRef.current.oncanplay = () => {
+      videoRef.current?.play().catch(() => {});
+    };
+    videoRef.current.src = URL.createObjectURL(mediaSource);
+
+    ws.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        const data = event.data as ArrayBuffer;
+        const firstByte = new Uint8Array(data)[0];
+
+        if (firstByte === 123) {
+          const text = new TextDecoder().decode(data);
+          try {
+            const msg = JSON.parse(text);
+            if (msg.type === 'error') {
+              console.error('go2rtc error:', msg.value);
+              hasError = true;
+              const errorMsg = msg.value || 'Stream error';
+              if (errorMsg.includes('404')) {
+                setPlaybackStatus('No recording at this time');
+              } else {
+                setPlaybackStatus('Stream unavailable');
+              }
+              ws.close();
+            } else if (msg.type === 'mse') {
+              const mimeType = msg.value;
+              console.log('MSE codec:', mimeType);
+
+              if (MediaSource.isTypeSupported(mimeType)) {
+                try {
+                  sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+                  sourceBufferRef.current = sourceBuffer;
+
+                  sourceBuffer.addEventListener('updateend', () => {
+                    isAppending = false;
+                    appendBuffer();
+                  });
+
+                  setPlaybackStatus('Playing');
+                } catch (e) {
+                  console.error('Error creating source buffer:', e);
+                  setPlaybackStatus('Codec not supported');
+                }
+              } else {
+                console.error('Unsupported codec:', mimeType);
+                setPlaybackStatus(`Unsupported codec: ${mimeType}`);
+              }
+            }
+          } catch (e) {
+            console.error('Error parsing JSON:', e);
+          }
+        } else {
+          queue.push(data);
+          appendBuffer();
+        }
+      }
+    };
+
+    ws.onerror = (e) => {
+      console.error('WebSocket error:', e);
+      setPlaybackStatus('Connection error');
+    };
+
+    ws.onclose = () => {
+      if (!hasError) {
+        setPlaybackStatus('Stream ended');
+      }
+    };
+  }, []);
+
+  // Start playback - chooses between HLS and MSE based on device
   const startPlayback = useCallback(async (channel: number, startTime: string, endTime: string) => {
     stopPlayback();
     if (streamInfo) {
@@ -144,12 +355,6 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
     }
 
     setPlaybackStatus('Connecting...');
-
-    // Check MediaSource support early
-    if (typeof MediaSource === 'undefined') {
-      setPlaybackStatus('MediaSource not supported on this browser');
-      return;
-    }
 
     try {
       const res = await fetch('/api/dvr/playback', {
@@ -173,137 +378,14 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
       setStreamInfo(info);
       setPlaybackStatus('Loading stream...');
 
-      const wsUrl = `ws://${window.location.host}/go2rtc/ws?src=${info.streamName}`;
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-      ws.binaryType = 'arraybuffer';
-
-      const mediaSource = new MediaSource();
-      mediaSourceRef.current = mediaSource;
-
-      let sourceBuffer: SourceBuffer | null = null;
-      const queue: ArrayBuffer[] = [];
-      let isAppending = false;
-      let wsReady = false;
-      let mediaSourceReady = false;
-      let hasError = false;
-
-      const appendBuffer = () => {
-        if (!sourceBuffer || isAppending || queue.length === 0) return;
-        if (sourceBuffer.updating) return;
-
-        isAppending = true;
-        const data = queue.shift();
-        if (data) {
-          try {
-            sourceBuffer.appendBuffer(data);
-          } catch (e) {
-            console.error('Error appending buffer:', e);
-            isAppending = false;
-          }
-        }
-      };
-
-      const tryStartMSE = () => {
-        if (wsReady && mediaSourceReady && ws.readyState === WebSocket.OPEN) {
-          console.log('Sending MSE request to go2rtc...');
-          ws.send(JSON.stringify({ type: 'mse' }));
-        }
-      };
-
-      // Connection timeout
-      const connectionTimeout = setTimeout(() => {
-        if (!wsReady || !mediaSourceReady) {
-          console.error('Connection timeout');
-          setPlaybackStatus('Connection timeout');
-          ws.close();
-        }
-      }, 10000);
-
-      ws.onopen = () => {
-        console.log('WebSocket connected to go2rtc proxy');
-        wsReady = true;
-        clearTimeout(connectionTimeout);
-        tryStartMSE();
-      };
-
-      mediaSource.addEventListener('sourceopen', () => {
-        console.log('MediaSource is ready');
-        mediaSourceReady = true;
-        tryStartMSE();
-      });
-
-      if (videoRef.current) {
-        // Set oncanplay BEFORE src to avoid race condition
-        videoRef.current.oncanplay = () => {
-          videoRef.current?.play().catch(() => {});
-        };
-        videoRef.current.src = URL.createObjectURL(mediaSource);
+      // Choose playback method based on device capabilities
+      if (needsHLS()) {
+        console.log('Device needs HLS, using HLS playback');
+        startHLSPlayback(info.streamName);
+      } else {
+        console.log('Device supports MSE, using MSE playback');
+        startMSEPlayback(info.streamName);
       }
-
-      ws.onmessage = (event) => {
-        if (event.data instanceof ArrayBuffer) {
-          const data = event.data as ArrayBuffer;
-          const firstByte = new Uint8Array(data)[0];
-
-          if (firstByte === 123) {
-            const text = new TextDecoder().decode(data);
-            try {
-              const msg = JSON.parse(text);
-              if (msg.type === 'error') {
-                console.error('go2rtc error:', msg.value);
-                hasError = true;
-                const errorMsg = msg.value || 'Stream error';
-                if (errorMsg.includes('404')) {
-                  setPlaybackStatus('No recording at this time');
-                } else {
-                  setPlaybackStatus('Stream unavailable');
-                }
-                ws.close();
-              } else if (msg.type === 'mse') {
-                const mimeType = msg.value;
-                console.log('MSE codec:', mimeType);
-
-                if (MediaSource.isTypeSupported(mimeType)) {
-                  try {
-                    sourceBuffer = mediaSource.addSourceBuffer(mimeType);
-                    sourceBufferRef.current = sourceBuffer;
-
-                    sourceBuffer.addEventListener('updateend', () => {
-                      isAppending = false;
-                      appendBuffer();
-                    });
-
-                    setPlaybackStatus('Playing');
-                  } catch (e) {
-                    console.error('Error creating source buffer:', e);
-                    setPlaybackStatus('Codec not supported');
-                  }
-                } else {
-                  console.error('Unsupported codec:', mimeType);
-                  setPlaybackStatus(`Unsupported codec: ${mimeType}`);
-                }
-              }
-            } catch (e) {
-              console.error('Error parsing JSON:', e);
-            }
-          } else {
-            queue.push(data);
-            appendBuffer();
-          }
-        }
-      };
-
-      ws.onerror = (e) => {
-        console.error('WebSocket error:', e);
-        setPlaybackStatus('Connection error');
-      };
-
-      ws.onclose = () => {
-        if (!hasError) {
-          setPlaybackStatus('Stream ended');
-        }
-      };
 
     } catch (err) {
       console.error('Failed to start playback:', err);
@@ -314,7 +396,7 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
         setPlaybackStatus(`Playback error: ${errMsg}`);
       }
     }
-  }, [streamInfo, stopPlayback]);
+  }, [streamInfo, stopPlayback, startHLSPlayback, startMSEPlayback]);
 
   // Auto-start playback from URL on initial load
   useEffect(() => {
