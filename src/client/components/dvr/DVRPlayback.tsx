@@ -147,32 +147,64 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
   }, []);
 
   // Start MP4 playback for mobile devices (simpler than HLS, works on all browsers)
-  const startMP4Playback = useCallback((streamName: string) => {
+  const startMP4Playback = useCallback((streamName: string, retryCount = 0) => {
     if (!videoRef.current) return;
 
     // Use go2rtc's MP4 progressive streaming endpoint
     const mp4Url = `/go2rtc/stream.mp4?src=${streamName}`;
-    console.log('Starting MP4 playback:', mp4Url);
+    console.log(`Starting MP4 playback (attempt ${retryCount + 1}):`, mp4Url);
 
-    videoRef.current.src = mp4Url;
-    videoRef.current.oncanplay = () => {
-      console.log('MP4 can play');
-      videoRef.current?.play().catch((e) => {
+    // Clear existing handlers
+    const video = videoRef.current;
+    video.oncanplay = null;
+    video.onplaying = null;
+    video.onerror = null;
+    video.onwaiting = null;
+    video.onloadeddata = null;
+
+    // Set up event handlers before setting src
+    video.onloadeddata = () => {
+      console.log('MP4 loaded data');
+      video.play().catch((e) => {
         console.warn('Autoplay blocked:', e);
         setPlaybackStatus('Tap to play');
       });
     };
-    videoRef.current.onplaying = () => {
+
+    video.onplaying = () => {
+      console.log('MP4 playing');
       setPlaybackStatus('Playing');
     };
-    videoRef.current.onerror = (e) => {
-      console.error('MP4 playback error:', e);
-      setPlaybackStatus('Playback failed');
+
+    video.onerror = () => {
+      const error = video.error;
+      console.error('MP4 playback error:', error?.code, error?.message);
+
+      // Retry up to 3 times with increasing delays (stream may not be ready)
+      if (retryCount < 3) {
+        const delay = (retryCount + 1) * 1000; // 1s, 2s, 3s
+        console.log(`Retrying in ${delay}ms...`);
+        setPlaybackStatus(`Connecting... (${retryCount + 1}/3)`);
+        setTimeout(() => startMP4Playback(streamName, retryCount + 1), delay);
+      } else {
+        setPlaybackStatus('Playback failed - try again');
+      }
     };
-    videoRef.current.onwaiting = () => {
+
+    video.onwaiting = () => {
       setPlaybackStatus('Buffering...');
     };
-    setPlaybackStatus('Loading...');
+
+    setPlaybackStatus(retryCount > 0 ? `Connecting... (${retryCount + 1}/3)` : 'Loading...');
+
+    // Add a small delay before setting src to let go2rtc initialize the stream
+    const initialDelay = retryCount === 0 ? 500 : 0;
+    setTimeout(() => {
+      if (videoRef.current) {
+        videoRef.current.src = mp4Url;
+        videoRef.current.load();
+      }
+    }, initialDelay);
   }, []);
 
   // Start MSE playback via go2rtc (for desktop browsers)
@@ -193,6 +225,19 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
     let wsReady = false;
     let mediaSourceReady = false;
     let hasError = false;
+    let hasStartedPlaying = false;
+
+    // Try to start playback when we have enough data
+    const tryPlay = () => {
+      if (hasStartedPlaying || !videoRef.current) return;
+      if (videoRef.current.readyState >= 2) { // HAVE_CURRENT_DATA or better
+        hasStartedPlaying = true;
+        console.log('MSE: Starting playback');
+        videoRef.current.play().catch((e) => {
+          console.warn('MSE autoplay blocked:', e);
+        });
+      }
+    };
 
     const appendBuffer = () => {
       if (!sourceBuffer || isAppending || queue.length === 0) return;
@@ -239,11 +284,20 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
       tryStartMSE();
     });
 
-    // Set oncanplay BEFORE src to avoid race condition
-    videoRef.current.oncanplay = () => {
-      videoRef.current?.play().catch(() => {});
+    // Set up video event handlers BEFORE src to avoid race conditions
+    const video = videoRef.current;
+    video.oncanplay = () => {
+      console.log('MSE: canplay event');
+      tryPlay();
     };
-    videoRef.current.src = URL.createObjectURL(mediaSource);
+    video.onplaying = () => {
+      console.log('MSE: playing event');
+      setPlaybackStatus('Playing');
+    };
+    video.onwaiting = () => {
+      setPlaybackStatus('Buffering...');
+    };
+    video.src = URL.createObjectURL(mediaSource);
 
     ws.onmessage = (event) => {
       if (event.data instanceof ArrayBuffer) {
@@ -276,9 +330,11 @@ export default function DVRPlayback({ onBack, initialChannel, initialDate, initi
                   sourceBuffer.addEventListener('updateend', () => {
                     isAppending = false;
                     appendBuffer();
+                    // Try to start playback after appending data
+                    tryPlay();
                   });
 
-                  setPlaybackStatus('Playing');
+                  setPlaybackStatus('Loading...');
                 } catch (e) {
                   console.error('Error creating source buffer:', e);
                   setPlaybackStatus('Codec not supported');
