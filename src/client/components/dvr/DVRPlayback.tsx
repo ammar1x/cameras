@@ -141,6 +141,7 @@ export default function DVRPlayback({ onBack }: Props) {
       let isAppending = false;
       let wsReady = false;
       let mediaSourceReady = false;
+      let hasError = false;
 
       const appendBuffer = () => {
         if (!sourceBuffer || isAppending || queue.length === 0) return;
@@ -196,7 +197,18 @@ export default function DVRPlayback({ onBack }: Props) {
             const text = new TextDecoder().decode(data);
             try {
               const msg = JSON.parse(text);
-              if (msg.type === 'mse') {
+              if (msg.type === 'error') {
+                // go2rtc returned an error (e.g., RTSP 404 - no recording at this time)
+                console.error('go2rtc error:', msg.value);
+                hasError = true;
+                const errorMsg = msg.value || 'Stream error';
+                if (errorMsg.includes('404')) {
+                  setPlaybackStatus('No recording at this time');
+                } else {
+                  setPlaybackStatus('Stream unavailable');
+                }
+                ws.close();
+              } else if (msg.type === 'mse') {
                 // Got codec info, create source buffer
                 const mimeType = msg.value;
                 console.log('MSE codec:', mimeType);
@@ -238,7 +250,10 @@ export default function DVRPlayback({ onBack }: Props) {
       };
 
       ws.onclose = () => {
-        setPlaybackStatus('Stream ended');
+        // Don't overwrite error status if we already handled an error
+        if (!hasError) {
+          setPlaybackStatus('Stream ended');
+        }
       };
 
       // Start video playback when enough data
